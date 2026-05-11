@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Derringer Serial font - replace with actual hosted font URL in production */
+/* For now, load from local public/fonts/ directory */
+@font-face {
+  font-family: 'Derringer Serial';
+  src: url('/fonts/derringer-serial-regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #3d3d3d;
+}
+::-webkit-scrollbar-thumb {
+  background: #5d5d5d;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c49f8c;
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid #c49f8c;
+  outline-offset: 2px;
+}
+
+/* Input styling */
+input, textarea, select {
+  @apply bg-brand-charcoal-deep border border-brand-charcoal rounded-lg px-4 py-3 text-brand-cream placeholder:text-brand-beige/50 focus:border-brand-rose-gold focus:ring-1 focus:ring-brand-rose-gold transition-colors;
+}
+
+/* Button base */
+.btn-primary {
+  @apply bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark font-bold px-6 py-3 rounded-lg transition-all hover:opacity-90 active:scale-[0.98];
+}
+
+.btn-secondary {
+  @apply border border-brand-charcoal text-brand-cream font-semibold px-6 py-3 rounded-lg transition-all hover:border-brand-rose-gold hover:text-brand-rose-gold;
+}
+
+@keyframes piqFade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
