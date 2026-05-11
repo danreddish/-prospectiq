@@ -149,35 +149,35 @@ const MOCK_PROSPECTS: MockProspect[] = [
       'Active on LinkedIn, posts monthly',
     ],
     signalExplain:
-      'These signals together suggest a wealthy operator with liquidity sitting in his Ltd company, a stable base of operations, and an engaged digital presence — meaning he is both a strong candidate and reachable.',
+      'These signals together suggest a wealthy operator with liquidity sitting in his Ltd company, a stable base of operations, and an engaged digital presence , meaning he is both a strong candidate and reachable.',
     scoreReason: {
       wealth:
-        '9/10 — £4.2m in retained earnings is a clear wealth marker. Three directorships across two sectors indicates diversified income.',
+        '9/10. £4.2m in retained earnings is a clear wealth marker. Three directorships across two sectors indicates diversified income.',
       timing:
-        '8/10 — Multi-sector director-shareholders typically rethink tax structure annually. Active recent filings suggest ongoing strategic activity.',
+        '8/10. Multi-sector director-shareholders typically rethink tax structure annually. Active recent filings suggest ongoing strategic activity.',
       accessibility:
-        '9/10 — Active LinkedIn profile with monthly posts. Open to engagement and connections.',
+        '9/10. Active LinkedIn profile with monthly posts. Open to engagement and connections.',
       complexity:
-        '8/10 — Spans property + energy holdings, suggesting interest in multi-asset planning conversations.',
+        '8/10. Spans property + energy holdings, suggesting interest in multi-asset planning conversations.',
     },
     outreach: {
       wealth_manager: {
         connection:
           'Hi Henry, I see we are both in the London property and energy space. Would value being connected.',
         welcome:
-          "Henry, thanks for connecting. Noticed Ashworth Holdings spans property and energy — an unusual combination at that scale. Curious whether you are seeing more clients in your network asking about how to consolidate income from multiple holdings for tax efficiency? Picking up on a pattern with similar director-shareholders this quarter.",
+          "Henry, thanks for connecting. Noticed Ashworth Holdings spans property and energy , an unusual combination at that scale. Curious whether you are seeing more clients in your network asking about how to consolidate income from multiple holdings for tax efficiency? Picking up on a pattern with similar director-shareholders this quarter.",
         relationship:
-          "Henry, came across something you may find useful. The 2025 Family Investment Companies update from STEP highlighted three structural changes most director-shareholders with multi-sector holdings are missing — particularly around dividend timing and reserve allocation. The bit on retained earnings strategies struck me as relevant to what Ashworth is doing. Happy to send the summary across if it would be useful — only takes a couple of minutes to read.",
+          "Henry, came across something you may find useful. The 2025 Family Investment Companies update from STEP highlighted three structural changes most director-shareholders with multi-sector holdings are missing , particularly around dividend timing and reserve allocation. The bit on retained earnings strategies struck me as relevant to what Ashworth is doing. Happy to send the summary across if it would be useful , only takes a couple of minutes to read.",
         moveOffline:
-          "Henry, since the STEP piece I sent over, I have spoken with three director-shareholders running similar structures who all flagged the same question — whether their current setup is still the most efficient given the autumn rule changes. The reason I am asking: I am trying to get a sense of whether this is a quiet concern across the sector or something most have already addressed. Would a brief 10-minute call in the next week or two be useful, or is this not really a priority right now? Either answer is helpful.",
+          "Henry, since the STEP piece I sent over, I have spoken with three director-shareholders running similar structures who all flagged the same question , whether their current setup is still the most efficient given the autumn rule changes. The reason I am asking: I am trying to get a sense of whether this is a quiet concern across the sector or something most have already addressed. Would a brief 10-minute call in the next week or two be useful, or is this not really a priority right now? Either answer is helpful.",
       },
       financial_planner: {
         connection:
           'Hi Henry, I see we are both based in London with an interest in long-term wealth planning. Would value being connected.',
         welcome:
-          "Henry, thanks for connecting. Noticed Ashworth Holdings spans property and energy. Curious whether your personal financial planning has kept pace with the complexity of the business side — most director-shareholders I speak with at your level say it has not. No agenda, just trying to understand the pattern.",
+          "Henry, thanks for connecting. Noticed Ashworth Holdings spans property and energy. Curious whether your personal financial planning has kept pace with the complexity of the business side , most director-shareholders I speak with at your level say it has not. No agenda, just trying to understand the pattern.",
         relationship:
-          "Henry, came across a piece you may find useful. The CISI's 2025 report on multi-directorship retirement planning broke down how three director-shareholders structured their drawdown across multiple Ltd companies — the part on dividend vs. salary timing in the 5-year run-up was particularly sharp. Happy to send the relevant section.",
+          "Henry, came across a piece you may find useful. The CISI's 2025 report on multi-directorship retirement planning broke down how three director-shareholders structured their drawdown across multiple Ltd companies , the part on dividend vs. salary timing in the 5-year run-up was particularly sharp. Happy to send the relevant section.",
         moveOffline:
           "Henry, after the CISI piece I shared, I have had short conversations with a handful of director-shareholders in similar positions. The common thread is that the personal-financial-planning side lags 3-5 years behind the business side. Curious whether that matches your own experience. Would a brief 10-minute call in the next couple of weeks be useful, or is this not currently a priority? Either answer helps.",
       },
@@ -185,9 +185,9 @@ const MOCK_PROSPECTS: MockProspect[] = [
         connection:
           'Hi Henry, I see we are both connected to the London property space. Would value being connected.',
         welcome:
-          "Henry, thanks for connecting. Noticed Ashworth Holdings has property in the mix. Curious — when you have considered new acquisitions, are you finding the Ltd-company mortgage market straightforward or has the underwriting got harder this year? Asking because I am seeing a clear split among director-shareholder clients.",
+          "Henry, thanks for connecting. Noticed Ashworth Holdings has property in the mix. When you have considered new acquisitions, are you finding the Ltd-company mortgage market straightforward or has the underwriting got harder this year? Asking because I am seeing a clear split among director-shareholder clients.",
         relationship:
-          "Henry, picked up something you may find useful. The 2025 review from the Property Wealth Forum compared how thirty-plus director-shareholders structured property purchases via Ltd vs. SPV vs. personal — the part on stress-testing retained earnings against rate rises was particularly relevant. Want me to send across the summary?",
+          "Henry, picked up something you may find useful. The 2025 review from the Property Wealth Forum compared how thirty-plus director-shareholders structured property purchases via Ltd vs. SPV vs. personal , the part on stress-testing retained earnings against rate rises was particularly relevant. Want me to send across the summary?",
         moveOffline:
           "Henry, since the Property Wealth Forum piece, I have spoken with four director-shareholders looking at property additions this year. The split between Ltd-company and SPV routes is far less obvious than people think. Would a brief 10-minute call in the next couple of weeks be useful, or is this not on your radar right now? Either answer is fine.",
       },
@@ -195,7 +195,7 @@ const MOCK_PROSPECTS: MockProspect[] = [
         connection:
           'Hi Henry, I see we are both in the London business community. Would value being connected.',
         welcome:
-          "Henry, thanks for connecting. Noticed Ashworth Holdings spans property and energy — an interesting combination. Curious whether the operational side of running multi-sector holdings is keeping pace with the strategic side, or whether something feels stretched? No agenda, just trying to understand a pattern.",
+          "Henry, thanks for connecting. Noticed Ashworth Holdings spans property and energy , an interesting combination. Curious whether the operational side of running multi-sector holdings is keeping pace with the strategic side, or whether something feels stretched? No agenda, just trying to understand a pattern.",
         relationship:
           "Henry, came across a piece on multi-sector director-shareholder structures that I think you may find useful. Happy to send across if it would help.",
         moveOffline:
@@ -219,33 +219,33 @@ const MOCK_PROSPECTS: MockProspect[] = [
       'Speaking at MIPIM 2026',
     ],
     signalExplain:
-      'A founder who has scaled visibly, has charitable involvements (a wealth marker) and an upcoming high-profile speaking slot — a strong wealth signal combined with a clear accessibility window.',
+      'A founder who has scaled visibly, has charitable involvements (a wealth marker) and an upcoming high-profile speaking slot , a strong wealth signal combined with a clear accessibility window.',
     scoreReason: {
       wealth:
-        '8/10 — £12m AUM as a founder implies meaningful personal stake. Charity board roles reinforce the wealth profile.',
+        '8/10. £12m AUM as a founder implies meaningful personal stake. Charity board roles reinforce the wealth profile.',
       timing:
-        '9/10 — Public speaking slot creates a natural touchpoint window. Recent FT feature indicates inflection point.',
+        '9/10. Public speaking slot creates a natural touchpoint window. Recent FT feature indicates inflection point.',
       accessibility:
-        '8/10 — Public profile, active speaker, multiple LinkedIn engagements.',
+        '8/10. Public profile, active speaker, multiple LinkedIn engagements.',
       complexity:
-        '6/10 — As a fellow operator in financial services, conversations need to be high-substance from message one.',
+        '6/10. As a fellow operator in financial services, conversations need to be high-substance from message one.',
     },
     outreach: {
       wealth_manager: {
         connection:
           'Hi Priya, I see we are both in the wealth advisory space in the North West. Would value being connected.',
         welcome:
-          "Priya, thanks for connecting. Saw the FT piece on Chandra Capital — the growth from 2018 to £12m AUM is genuinely impressive. Curious about something: as you have scaled, are you finding the operational side of HNW onboarding harder to keep pace with the client wins, or has that part stayed manageable?",
+          "Priya, thanks for connecting. Saw the FT piece on Chandra Capital , the growth from 2018 to £12m AUM is genuinely impressive. Curious about something: as you have scaled, are you finding the operational side of HNW onboarding harder to keep pace with the client wins, or has that part stayed manageable?",
         relationship:
-          "Priya, thinking about what you said in the FT around growth — I came across a research note from the PIMFA practice management group on what mid-sized wealth firms typically rebuild between £10m and £25m AUM. The compliance-vs-growth tension shows up consistently. Want me to send the summary? Three pages, no sales angle attached.",
+          "Priya, thinking about what you said in the FT around growth , I came across a research note from the PIMFA practice management group on what mid-sized wealth firms typically rebuild between £10m and £25m AUM. The compliance-vs-growth tension shows up consistently. Want me to send the summary? Three pages, no sales angle attached.",
         moveOffline:
-          "Priya, the PIMFA note I sent through got me thinking. Two founders I have spoken with this month brought up the same issue independently — onboarding compliance scaling slower than client wins. Your view would be genuinely useful given Chandra's trajectory. Would a 15-minute call in the next couple of weeks be worth your time, or is this not a current concern? Honest answer is best.",
+          "Priya, the PIMFA note I sent through got me thinking. Two founders I have spoken with this month brought up the same issue independently , onboarding compliance scaling slower than client wins. Your view would be genuinely useful given Chandra's trajectory. Would a 15-minute call in the next couple of weeks be worth your time, or is this not a current concern? Honest answer is best.",
       },
       financial_planner: {
         connection:
           'Hi Priya, I see we are both connected to the wealth advisory community in the North West. Would value being connected.',
         welcome:
-          "Priya, thanks for connecting. Saw the FT piece — Chandra Capital's trajectory is impressive. Curious whether founders in your position typically have their own personal financial planning sorted, or whether that ends up being the bit that gets postponed? Asking because I see a clear pattern.",
+          "Priya, thanks for connecting. Saw the FT piece , Chandra Capital's trajectory is impressive. Curious whether founders in your position typically have their own personal financial planning sorted, or whether that ends up being the bit that gets postponed? Asking because I see a clear pattern.",
         relationship:
           "Priya, came across something relevant to what you spoke about in the FT. The 2025 STEP report on founder-led wealth firms broke out how the personal-vs-business wealth boundary tends to blur between £10m and £30m AUM. The part on liquidity event planning was particularly sharp. Happy to send across.",
         moveOffline:
@@ -255,9 +255,9 @@ const MOCK_PROSPECTS: MockProspect[] = [
         connection:
           'Hi Priya, I see we are both in the financial services community in the North West. Would value being connected.',
         welcome:
-          "Priya, thanks for connecting. Saw the FT piece on Chandra Capital. Curious — for founders at your stage, is property finance one of those things you handle through a broker network or have your clients tended to self-source? Asking because I see firms split very differently on this.",
+          "Priya, thanks for connecting. Saw the FT piece on Chandra Capital. For founders at your stage, is property finance one of those things you handle through a broker network or have your clients tended to self-source? Asking because I see firms split very differently on this.",
         relationship:
-          "Priya, came across the 2025 PWF report on how mid-sized wealth firms manage property-finance referrals — the part on referral partnership structures was particularly relevant. Happy to send across if useful.",
+          "Priya, came across the 2025 PWF report on how mid-sized wealth firms manage property-finance referrals , the part on referral partnership structures was particularly relevant. Happy to send across if useful.",
         moveOffline:
           "Priya, after the PWF piece, a few wealth firm founders I have spoken with said the property-finance side of their referral network is the part that gets least attention. Would a 15-minute call in the next couple of weeks be useful, or is this not currently a priority?",
       },
@@ -288,16 +288,16 @@ const MOCK_PROSPECTS: MockProspect[] = [
       'Based Edinburgh, frequent LinkedIn engagement',
     ],
     signalExplain:
-      'Recent director changes often signal succession or restructuring activity — a natural inflection point for adjacent professional services. Combined with strong LinkedIn engagement, this is a workable contact.',
+      'Recent director changes often signal succession or restructuring activity , a natural inflection point for adjacent professional services. Combined with strong LinkedIn engagement, this is a workable contact.',
     scoreReason: {
       wealth:
-        '7/10 — Family holdings group is meaningfully sized but lacks the explicit retained-earnings signal seen in tier-A prospects.',
+        '7/10. Family holdings group is meaningfully sized but lacks the explicit retained-earnings signal seen in tier-A prospects.',
       timing:
-        '6/10 — Recent director changes are a positive signal but the trigger is moderate, not acute.',
+        '6/10. Recent director changes are a positive signal but the trigger is moderate, not acute.',
       accessibility:
-        '8/10 — Active LinkedIn engagement, accepts connections, comments publicly.',
+        '8/10. Active LinkedIn engagement, accepts connections, comments publicly.',
       complexity:
-        '6/10 — Family holdings introduce stakeholder dynamics that require more careful conversation framing.',
+        '6/10. Family holdings introduce stakeholder dynamics that require more careful conversation framing.',
     },
     outreach: {
       wealth_manager: {
@@ -306,9 +306,9 @@ const MOCK_PROSPECTS: MockProspect[] = [
         welcome:
           "James, thanks for connecting. Noticed Whitfield Group has gone through some director changes recently. Curious whether your next-generation involvement plans have come into focus yet, or whether that is still something the family is working through?",
         relationship:
-          "James, came across a piece you may find relevant. The Institute for Family Business put out a 2025 report on succession in Scottish family holdings — the section on how three families handled director transitions without disrupting trading operations was particularly good. Want me to send across the relevant pages?",
+          "James, came across a piece you may find relevant. The Institute for Family Business put out a 2025 report on succession in Scottish family holdings , the section on how three families handled director transitions without disrupting trading operations was particularly good. Want me to send across the relevant pages?",
         moveOffline:
-          "James, after the IFB piece I sent, I have been comparing notes with a handful of family-business CEOs at a similar stage. The common thread is that succession planning gets framed as a one-time exercise when really it is a five-year process. Would a short call in the next couple of weeks be useful — or if now is not the right time, just say.",
+          "James, after the IFB piece I sent, I have been comparing notes with a handful of family-business CEOs at a similar stage. The common thread is that succession planning gets framed as a one-time exercise when really it is a five-year process. Would a short call in the next couple of weeks be useful , or if now is not the right time, just say.",
       },
       financial_planner: {
         connection:
@@ -316,15 +316,15 @@ const MOCK_PROSPECTS: MockProspect[] = [
         welcome:
           "James, thanks for connecting. Noticed Whitfield Group has had some director changes. Curious whether the personal-financial-planning side of any transition is something the family has worked through, or whether that is still ahead?",
         relationship:
-          "James, came across the 2025 IFB succession report — the part on how family CEOs separated personal financial planning from the business transition is genuinely useful. Want me to send across the relevant pages?",
+          "James, came across the 2025 IFB succession report , the part on how family CEOs separated personal financial planning from the business transition is genuinely useful. Want me to send across the relevant pages?",
         moveOffline:
-          "James, after the IFB piece, two family CEOs I have spoken with raised the same question — whether their personal planning is keeping pace with the business transition. Would a short call in the next couple of weeks be useful?",
+          "James, after the IFB piece, two family CEOs I have spoken with raised the same question , whether their personal planning is keeping pace with the business transition. Would a short call in the next couple of weeks be useful?",
       },
       mortgage_broker: {
         connection:
           'Hi James, I see we are both connected to the Scottish business community. Would value being connected.',
         welcome:
-          "James, thanks for connecting. Noticed Whitfield Group has had some changes recently. Curious whether the family has any property-finance moves on the cards — purchases, refinancing, restructuring — or whether the focus is entirely on the trading side?",
+          "James, thanks for connecting. Noticed Whitfield Group has had some changes recently. Curious whether the family has any property-finance moves on the cards (purchases, refinancing, restructuring), or whether the focus is entirely on the trading side?",
         relationship:
           "James, came across a useful 2025 PWF piece on how Scottish family holdings groups structured property finance through transition periods. Happy to send across.",
         moveOffline:
@@ -357,16 +357,16 @@ const MOCK_PROSPECTS: MockProspect[] = [
       'Active LinkedIn presence',
     ],
     signalExplain:
-      'A property-focused MD with visible BTL portfolios — clear wealth signals in an asset class that responds well to specialist advice. Lower complexity makes for a clean conversation.',
+      'A property-focused MD with visible BTL portfolios , clear wealth signals in an asset class that responds well to specialist advice. Lower complexity makes for a clean conversation.',
     scoreReason: {
       wealth:
-        '6/10 — Property MD with multiple visible BTL portfolios is solid but not yet in the highest wealth bracket.',
+        '6/10. Property MD with multiple visible BTL portfolios is solid but not yet in the highest wealth bracket.',
       timing:
-        '7/10 — Post-April 2025 tax shifts have created an ongoing structural question for BTL holders.',
+        '7/10. Post-April 2025 tax shifts have created an ongoing structural question for BTL holders.',
       accessibility:
-        '7/10 — Active LinkedIn, posts commentary on the sector.',
+        '7/10. Active LinkedIn, posts commentary on the sector.',
       complexity:
-        '4/10 — Clear, well-understood asset class. Easy to frame value quickly.',
+        '4/10. Clear, well-understood asset class. Easy to frame value quickly.',
     },
     outreach: {
       wealth_manager: {
@@ -383,9 +383,9 @@ const MOCK_PROSPECTS: MockProspect[] = [
         connection:
           'Hi Sara, I see we are both connected to the South West property community. Would value being connected.',
         welcome:
-          "Sara, thanks for connecting. Saw your BTL commentary. Curious whether the personal financial planning side keeps pace with the business side — most property MDs I speak with say it does not.",
+          "Sara, thanks for connecting. Saw your BTL commentary. Curious whether the personal financial planning side keeps pace with the business side , most property MDs I speak with say it does not.",
         relationship:
-          "Sara, came across the 2025 PFS report on personal financial planning for property MDs — the part on segregating personal vs. business liquidity was particularly sharp. Happy to send across.",
+          "Sara, came across the 2025 PFS report on personal financial planning for property MDs , the part on segregating personal vs. business liquidity was particularly sharp. Happy to send across.",
         moveOffline:
           "Sara, after the PFS piece, a few property MDs I have spoken with said the personal-planning side has been parked for years. Would a quick 10-minute call in the next week be useful?",
       },
@@ -425,16 +425,16 @@ const MOCK_PROSPECTS: MockProspect[] = [
       'Limited public financial signals',
     ],
     signalExplain:
-      'Limited public wealth signals and a single directorship suggest this is a long-term-relationship prospect rather than a near-term opportunity — still worth a touch, but expectations should be set accordingly.',
+      'Limited public wealth signals and a single directorship suggest this is a long-term-relationship prospect rather than a near-term opportunity , still worth a touch, but expectations should be set accordingly.',
     scoreReason: {
       wealth:
-        '5/10 — Single directorship with limited public financial information. Wealth is plausible but unverified.',
+        '5/10. Single directorship with limited public financial information. Wealth is plausible but unverified.',
       timing:
-        '5/10 — No clear inflection trigger.',
+        '5/10. No clear inflection trigger.',
       accessibility:
-        '5/10 — Standard LinkedIn presence, no strong signals of engagement.',
+        '5/10. Standard LinkedIn presence, no strong signals of engagement.',
       complexity:
-        '4/10 — Generalist consultancy — conversation can stay accessible.',
+        '4/10. Generalist consultancy. Conversation can stay accessible.',
     },
     outreach: {
       wealth_manager: {
@@ -445,7 +445,7 @@ const MOCK_PROSPECTS: MockProspect[] = [
         relationship:
           "Tom, came across something you may find useful. The Yorkshire Business Confidence index for Q4 broke out professional services separately for the first time. Mixed picture, but a clear divide between those investing now and those waiting. Want me to send the summary?",
         moveOffline:
-          "Tom, after the Yorkshire confidence piece I shared, a few owner-directors I have spoken with raised the same question — whether now is the time to invest or hold. Your read on it would help. Would a short call in the next couple of weeks be worth doing, or is this not a current focus? Either answer is fine.",
+          "Tom, after the Yorkshire confidence piece I shared, a few owner-directors I have spoken with raised the same question , whether now is the time to invest or hold. Your read on it would help. Would a short call in the next couple of weeks be worth doing, or is this not a current focus? Either answer is fine.",
       },
       financial_planner: {
         connection:
@@ -453,7 +453,7 @@ const MOCK_PROSPECTS: MockProspect[] = [
         welcome:
           "Tom, thanks for connecting. Noticed Beresford & Co has been steady. Curious whether you have looked at your personal financial planning recently, or whether the focus has stayed entirely on the firm?",
         relationship:
-          "Tom, came across the Yorkshire Business Confidence index for Q4 — the part on professional-services owner-director personal positions was useful context. Want me to send across?",
+          "Tom, came across the Yorkshire Business Confidence index for Q4 , the part on professional-services owner-director personal positions was useful context. Want me to send across?",
         moveOffline:
           "Tom, after the YBC piece, a few directors I have spoken with said they have not looked at their personal planning in years. Would a short call in the next couple of weeks be useful?",
       },
@@ -461,9 +461,9 @@ const MOCK_PROSPECTS: MockProspect[] = [
         connection:
           'Hi Tom, I see we are both in the Yorkshire business community. Would value being connected.',
         welcome:
-          "Tom, thanks for connecting. Noticed Beresford & Co has been steady. Curious whether property is on the agenda — either personal or company-route — or whether the focus is entirely on the consultancy?",
+          "Tom, thanks for connecting. Noticed Beresford & Co has been steady. Curious whether property is on the agenda (personal or company-route), or whether the focus is entirely on the consultancy?",
         relationship:
-          "Tom, came across the YBC Q4 index — useful context on owner-director property activity. Happy to send across.",
+          "Tom, came across the YBC Q4 index , useful context on owner-director property activity. Happy to send across.",
         moveOffline:
           "Tom, after the YBC piece, would a short call in the next couple of weeks be useful?",
       },
@@ -552,7 +552,7 @@ const TOUR_STEPS: TourStep[] = [
     highlight: 'roi',
     title: 'Track the ROI',
     body:
-      'See hours saved and the conversion funnel. That ends the tour — explore freely or join the waitlist below.',
+      'See hours saved and the conversion funnel. That ends the tour. Explore freely or join the waitlist below.',
   },
 ]
 
@@ -737,7 +737,7 @@ export default function DemoPage() {
         <div className="relative max-w-6xl mx-auto px-6 pt-16 pb-12 text-center">
           <img
             src="/prospectiq-logo.png"
-            alt="ProspectIQ — HNW Prospect Intelligence — For advisors who'd rather have less, but better."
+            alt="ProspectIQ. HNW Prospect Intelligence. For advisors who'd rather have less, but better."
             className="w-full max-w-[680px] h-auto mx-auto"
           />
           <p className="text-base md:text-lg text-[#fbf9f4]/70 leading-relaxed max-w-xl mx-auto mt-10 mb-8">
@@ -935,7 +935,7 @@ function RoleGateScreen({ role, setRole }: RoleGateProps) {
         </h2>
         <p className="text-[11px] text-[#fbf9f4]/60 leading-relaxed">
           ProspectIQ tailors campaigns, prospects, and outreach to your role.
-          Pick the one that fits — you can change it later.
+          Pick the one that fits. You can change it later.
         </p>
       </div>
 
@@ -998,7 +998,7 @@ function DashboardScreen({ role, setScreen, highlight }: DashboardProps) {
         <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#c49f8c] to-[#a18d89]" />
       </div>
 
-      {/* Stats — clickable into ROI */}
+      {/* Stats , clickable into ROI */}
       <button
         onClick={() => setScreen('results')}
         className={`w-full grid grid-cols-2 gap-1.5 mb-3 rounded-xl text-left ${
@@ -1356,14 +1356,12 @@ function ResearchingScreen({ prospect, setScreen, highlight }: ResearchingProps)
   const handleSignalComplete = useCallback(() => {
     if (isLastSignal) {
       setStreamingDone(true)
-      // Auto-advance to outreach after a beat
-      const t = setTimeout(() => setScreen('outreach'), 3500)
-      return () => clearTimeout(t)
+      // No auto-advance, user clicks "Create outreach" button to move forward.
     } else {
       const t = setTimeout(() => setCurrentSignal((s) => s + 1), 200)
       return () => clearTimeout(t)
     }
-  }, [isLastSignal, setScreen])
+  }, [isLastSignal])
 
   const { displayed } = useStreamingText(currentText, true, handleSignalComplete)
 
@@ -1442,7 +1440,7 @@ function ResearchingScreen({ prospect, setScreen, highlight }: ResearchingProps)
       {streamingDone && (
         <div className="mt-3 rounded-xl bg-gradient-to-br from-[#c49f8c]/20 to-transparent border border-[#c49f8c]/30 p-3 animate-[piqFade_0.5s_ease-out]">
           <p className="text-[8px] text-[#c49f8c] tracking-widest uppercase m-0 mb-1">
-            Tier {prospect.tier} — Score {prospect.total}/40
+            Tier {prospect.tier} &middot; Score {prospect.total}/40
           </p>
           <div className="grid grid-cols-4 gap-1.5 mt-1.5">
             {(['wealth', 'timing', 'accessibility', 'complexity'] as const).map((k) => {
@@ -1476,6 +1474,16 @@ function ResearchingScreen({ prospect, setScreen, highlight }: ResearchingProps)
           </p>
         </div>
       )}
+
+      {/* Manual progression to outreach — replaces previous auto-advance */}
+      {streamingDone && (
+        <button
+          onClick={() => setScreen('outreach')}
+          className="w-full mt-3 py-2.5 rounded-xl bg-[#c49f8c] text-[#0a0a0a] font-semibold text-[12px] border-none animate-[piqFade_0.5s_ease-out] tracking-wide"
+        >
+          Create outreach →
+        </button>
+      )}
     </div>
   )
 }
@@ -1503,7 +1511,7 @@ interface OutreachProps {
 function OutreachScreen({ prospect, role, setScreen, highlight }: OutreachProps) {
   const messages = prospect.outreach[role]
   const sequence = [
-    { stage: '1. Connection request', timing: 'Day 1', text: messages.connection, why: 'Common ground only. No pitch, no results claims — keeps the connection rate high.' },
+    { stage: '1. Connection request', timing: 'Day 1', text: messages.connection, why: 'Common ground only. No pitch, no results claims , keeps the connection rate high.' },
     { stage: '2. Welcome', timing: 'After they accept', text: messages.welcome, why: 'Rapport plus an illumination question. Designed to start a real conversation, not a sales pitch.' },
     { stage: '3. Value drop', timing: '+1 week', text: messages.relationship, why: 'Shares a specific named resource. No ask. Builds reciprocity (Cialdini) before any request.' },
     { stage: '4. Move offline', timing: '+2 weeks', text: messages.moveOffline, why: 'A temperature check, not a hard ask. Gives an explicit honest-out so the prospect feels in control.' },
@@ -1602,12 +1610,22 @@ function OutreachScreen({ prospect, role, setScreen, highlight }: OutreachProps)
       </div>
 
       {allDone && (
-        <button
-          onClick={handleCopy}
-          className="w-full mt-2 py-2 rounded-xl bg-[#c49f8c] text-[#0a0a0a] font-semibold text-[11px] border-none animate-[piqFade_0.4s_ease-out]"
-        >
-          {copied ? '✓ Copied all 4 messages' : 'Copy all & open LinkedIn'}
-        </button>
+        <div className="mt-2 animate-[piqFade_0.4s_ease-out]">
+          <button
+            onClick={handleCopy}
+            className="w-full py-2.5 rounded-xl bg-[#c49f8c] text-[#0a0a0a] font-semibold text-[11px] border-none tracking-wide"
+          >
+            {copied ? '✓ Sequence queued' : 'Send sequence'}
+          </button>
+          <p className="text-[8px] text-[#fbf9f4]/55 mt-1.5 mb-0 text-center leading-snug">
+            {copied
+              ? 'Connection on Day 1, messages 2-4 spaced across 21 days.'
+              : 'Auto-sent via your connected LinkedIn account, spaced across 21 days.'}
+          </p>
+          <p className="text-[8px] text-[#fbf9f4]/40 mt-1 mb-0 text-center">
+            <span style={{ textDecoration: 'underline', cursor: 'pointer' }}>Send manually instead</span>
+          </p>
+        </div>
       )}
     </div>
   )
@@ -1871,7 +1889,7 @@ function WaitlistForm({ initialCount }: WaitlistFormProps) {
         </h2>
         <p className="text-[#fbf9f4]/70 leading-relaxed text-sm">
           Be one of the first 100 to join ProspectIQ and lock in founding member pricing.
-          No card needed now — we will email you the moment access opens.
+          No card needed now. We will email you the moment access opens.
         </p>
         <div className="mt-4 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0a0a0a] border border-[#c49f8c]/20">
           <span
