@@ -41,11 +41,7 @@ export default function HeroVideo() {
       loop
       playsInline
       poster={POSTER_URL}
-      className="absolute bottom-0 right-0 w-[680px] h-[680px] object-cover opacity-[0.22] pointer-events-none select-none"
-      style={{
-        maskImage: 'radial-gradient(circle at center, black 35%, transparent 72%)',
-        WebkitMaskImage: 'radial-gradient(circle at center, black 35%, transparent 72%)',
-      }}
+      className="absolute inset-0 w-full h-full object-cover opacity-[0.18] pointer-events-none select-none"
     />
   )
 }
