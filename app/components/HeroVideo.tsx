@@ -16,6 +16,8 @@ export default function HeroVideo() {
     // Safari supports HLS natively
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = HLS_URL
+      video.load()
+      video.play().catch(() => {})
       return
     }
 
@@ -26,6 +28,9 @@ export default function HeroVideo() {
       hls = new Hls({ autoStartLoad: true, lowLatencyMode: false })
       hls.loadSource(HLS_URL)
       hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {})
+      })
     })
 
     return () => {
