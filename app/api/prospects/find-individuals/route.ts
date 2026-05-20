@@ -69,6 +69,7 @@ async function findApolloProspects(
   // Build the primary search params from what the AI generated
   const searchParams = {
     person_locations: params.person_locations as string[] | undefined,
+    organization_locations: params.organization_locations as string[] | undefined,
     person_seniorities: params.person_seniorities as string[] | undefined,
     person_titles: params.person_titles as string[] | undefined,
     q_organization_keyword_tags: params.q_organization_keyword_tags as string[] | undefined,
@@ -127,6 +128,7 @@ async function findApolloProspects(
         q_keywords: kw,
         person_seniorities: searchParams.person_seniorities || ['director', 'c_suite', 'owner', 'partner', 'vp'],
         person_locations: searchParams.person_locations,
+        organization_locations: searchParams.organization_locations,
         per_page: perPage,
         page,
       })

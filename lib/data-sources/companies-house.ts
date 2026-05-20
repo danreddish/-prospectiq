@@ -192,3 +192,88 @@ export function isDirector(role: string): boolean {
   const r = role.toLowerCase()
   return r.includes('director') || r.includes('member') || r.includes('partner')
 }
+
+// ── Company Financials ───────────────────────
+//
+// Companies House does NOT expose turnover or balance sheet figures via the
+// public REST API. The /company/{number} endpoint returns the accounts
+// CATEGORY (full / group / medium / small / micro-entity / dormant) and
+// filing dates, but not raw financial numbers.
+//
+// The accounts category alone is a strong wealth signal — micro-entity and
+// dormant companies cannot legitimately score high on wealth regardless of
+// what an LLM might infer from the company name or director count.
+//
+// Filing-history can be parsed for filed accounts documents, but the full
+// figures live inside the iXBRL files which require a separate fetch and
+// parse. That's out of scope for v75. v75 uses accounts_category as the
+// primary hard signal, and last_accounts_made_up_to as a recency signal.
+
+export interface CHFinancials {
+  accountsCategory: string | null    // 'full', 'group', 'medium', 'small', 'micro-entity', 'dormant', etc.
+  lastAccountsMadeUpTo: string | null  // ISO date of latest filed period end
+  lastAccountsType: string | null      // raw type string from CH
+  nextAccountsOverdue: boolean | null
+  hasFiledAccounts: boolean
+  companyStatus: string | null         // active, dissolved, liquidation, etc.
+  dateOfCreation: string | null
+}
+
+export async function getCompanyFinancials(companyNumber: string): Promise<CHFinancials | null> {
+  if (!companyNumber) return null
+
+  const data = await chFetch(`/company/${companyNumber}`)
+  if (!data) return null
+
+  const accounts = (data.accounts as Record<string, unknown> | undefined) || {}
+  const lastAccounts = accounts.last_accounts as Record<string, unknown> | undefined
+  const nextAccounts = accounts.next_accounts as Record<string, unknown> | undefined
+
+  const category = (lastAccounts?.type as string | undefined) || null
+  // Normalise: CH uses hyphenated lower-case slugs like "micro-entity", "full", "small"
+  const normalisedCategory = category ? category.toLowerCase().trim() : null
+
+  return {
+    accountsCategory: normalisedCategory,
+    lastAccountsMadeUpTo: (lastAccounts?.made_up_to as string) || null,
+    lastAccountsType: category,
+    nextAccountsOverdue: (nextAccounts?.overdue as boolean) ?? null,
+    hasFiledAccounts: !!lastAccounts?.made_up_to,
+    companyStatus: (data.company_status as string) || null,
+    dateOfCreation: (data.date_of_creation as string) || null,
+  }
+}
+
+// Hard wealth score caps based on accounts category.
+// Per Dan's beta tester feedback: dormant and micro-entity companies were
+// being scored 7-9 on wealth based on sector + multiple directorships,
+// when actual filed accounts showed the company was nothing.
+//
+// Returns the maximum wealth score (1-10) this company can support.
+// Returns null if no cap applies (medium/full accounts, score normally).
+export function wealthCeilingFromAccounts(category: string | null, status: string | null): number | null {
+  if (status && status.toLowerCase() !== 'active') return 2  // dissolved, liquidation, etc.
+  if (!category) return 3  // no filed accounts = no proof of trading
+  const c = category.toLowerCase()
+  if (c.includes('dormant')) return 2
+  if (c.includes('micro')) return 4
+  if (c.includes('small') || c.includes('abridged')) return 6
+  if (c.includes('no-accounts')) return 3
+  // medium, full, group, audit-exempt, etc. = no cap
+  return null
+}
+
+// Human-readable label for the UI
+export function formatAccountsCategory(category: string | null): string {
+  if (!category) return 'No accounts filed'
+  const c = category.toLowerCase()
+  if (c.includes('dormant')) return 'Dormant'
+  if (c.includes('micro')) return 'Micro-entity'
+  if (c.includes('small')) return 'Small'
+  if (c.includes('abridged')) return 'Abridged'
+  if (c.includes('medium')) return 'Medium'
+  if (c.includes('full')) return 'Full'
+  if (c.includes('group')) return 'Group'
+  if (c.includes('no-accounts')) return 'No accounts'
+  return category.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+}

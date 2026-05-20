@@ -20,10 +20,24 @@ interface ServiceProfile {
   geographic_focus: string | null
 }
 
+// Companies House financial data passed in for HNW prospects.
+// Used to apply hard wealth-score caps so the AI cannot inflate scores on
+// dormant or micro-entity companies based on sector or director count alone.
+export interface ProspectFinancials {
+  accountsCategory: string | null
+  hasFiledAccounts: boolean
+  companyStatus: string | null
+  dateOfCreation: string | null
+  wealthCeiling: number | null         // null = no cap
+  formattedCategory: string             // for the prompt and the UI
+}
+
 interface ResearchContext {
   niche: string
   senderName: string
   serviceProfile?: ServiceProfile
+  customInstructions?: string | null
+  financials?: ProspectFinancials | null
 }
 
 interface AIResearchResult {
@@ -56,20 +70,41 @@ export async function researchProspect(
 ): Promise<AIResearchResult> {
   const serviceCtx = buildServiceContext(context.serviceProfile)
 
+  // Financial constraints block (only present for HNW UK prospects with CH data)
+  let financialsBlock = ''
+  if (context.financials) {
+    const fin = context.financials
+    financialsBlock = `\n\nVERIFIED COMPANIES HOUSE DATA for ${input.company}:`
+    financialsBlock += `\n- Company status: ${fin.companyStatus || 'unknown'}`
+    financialsBlock += `\n- Accounts category: ${fin.formattedCategory}`
+    if (fin.dateOfCreation) financialsBlock += `\n- Incorporated: ${fin.dateOfCreation}`
+    if (!fin.hasFiledAccounts) financialsBlock += `\n- WARNING: company has not filed any accounts yet`
+
+    if (fin.wealthCeiling !== null) {
+      financialsBlock += `\n\nHARD WEALTH SCORING CAP: The wealth score for this prospect MUST NOT exceed ${fin.wealthCeiling}/10. This is based on verified Companies House filings. Do not inflate the wealth score above this ceiling regardless of sector, director count, location, or other soft signals. A ${fin.formattedCategory.toLowerCase()} company is by legal definition below certain financial thresholds — overscoring damages user trust. Pick a wealth score from 1 to ${fin.wealthCeiling}.`
+    }
+  }
+
+  // Custom instructions block (user-supplied per campaign)
+  let customBlock = ''
+  if (context.customInstructions && context.customInstructions.trim()) {
+    customBlock = `\n\nUSER INSTRUCTIONS FOR THIS CAMPAIGN (apply to scoring and outreach personalisation): "${context.customInstructions.trim()}"`
+  }
+
   const response = await getAnthropic().messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1200,
     system: `Research prospects for a financial services professional. Return JSON only.
-Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}
+Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}${financialsBlock}
 
 SCORING (1-10 each):
-- wealth: Infer from role seniority, company type/size, and location. CEO of a family office = 9-10. Mid-level at a large firm = 4-5.
+- wealth: Infer from role seniority, company type/size, and location. CEO of a family office = 9-10. Mid-level at a large firm = 4-5.${context.financials?.wealthCeiling !== null && context.financials?.wealthCeiling !== undefined ? ` CRITICAL: hard cap is ${context.financials.wealthCeiling}/10 based on verified accounts data above.` : ''}
 - timing: How likely they need services NOW. Approaching retirement (50-65) = high. New in role = high. Established and settled = lower.
 - accessibility: How easy to reach. Owner-managers and partners = high. C-suite at large corporates = lower.
 - complexity: Multiple companies, cross-border, property portfolios = high. Single simple role = low.
 TIERS: A=30+, B=22-29, C=below 22.${serviceCtx ? '\nScore HIGHER if prospect matches the IDEAL CLIENT description. Score timing HIGHER if prospect likely needs the stated OUTCOMES.' : ''}
 
-WEALTH ESTIMATE: You MUST estimate uniquely for each prospect based on their specific role, company, and location. Do NOT default to the same range for everyone.${context.serviceProfile?.minimum_threshold ? ` The sender targets clients with ${context.serviceProfile.minimum_threshold} minimum — calibrate relative to that threshold.` : ''} Ranges: £500K-1M, £1-3M, £3-5M, £5-10M, £10-25M, £25-50M, £50-100M, £100M+. A CIO at a family office is very different from a director at a small consultancy.
+WEALTH ESTIMATE: You MUST estimate uniquely for each prospect based on their specific role, company, and location. Do NOT default to the same range for everyone.${context.serviceProfile?.minimum_threshold ? ` The sender targets clients with ${context.serviceProfile.minimum_threshold} minimum — calibrate relative to that threshold.` : ''}${context.financials?.wealthCeiling !== null && context.financials?.wealthCeiling !== undefined ? ` Verified accounts data caps this prospect at ${context.financials.formattedCategory.toLowerCase()} — adjust the wealth estimate accordingly. A micro-entity director rarely has £5M+ personal wealth from this company alone.` : ''} Ranges: £500K-1M, £1-3M, £3-5M, £5-10M, £10-25M, £25-50M, £50-100M, £100M+. A CIO at a family office is very different from a director at a small consultancy.
 
 AGE ESTIMATE: Infer from career length implied by seniority. Do NOT default to 50-60 for everyone. A VP might be 35-45. A founder with 20+ years could be 55-65.
 
@@ -114,6 +149,16 @@ Return this exact JSON structure (fill in ALL values uniquely for this specific 
   if (!jsonMatch) throw new Error('AI response did not contain valid JSON')
 
   const result = JSON.parse(jsonMatch[0]) as AIResearchResult
+
+  // Enforce hard cap server-side too, in case the model ignored the prompt.
+  if (context.financials?.wealthCeiling !== null && context.financials?.wealthCeiling !== undefined) {
+    const cap = context.financials.wealthCeiling
+    if (result.scores.wealth && result.scores.wealth > cap) {
+      console.log(`[Research] Enforcing wealth cap: ${result.scores.wealth} -> ${cap} for ${input.name} (${context.financials.formattedCategory})`)
+      result.scores.wealth = cap
+    }
+  }
+
   validateResult(result)
   return result
 }

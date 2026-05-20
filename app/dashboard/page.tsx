@@ -30,7 +30,7 @@ export default async function DashboardPage() {
             Research, score, and sequence your prospects.
           </p>
         </div>
-        <Link href="/dashboard/campaigns" className="btn-primary text-sm">
+        <Link href="/dashboard/campaigns/new" className="btn-primary text-sm">
           New Campaign
         </Link>
       </div>
@@ -89,7 +89,7 @@ export default async function DashboardPage() {
         ) : (
           <div className="p-12 text-center">
             <p className="text-brand-beige mb-4">No campaigns yet. Create your first one to start researching prospects.</p>
-            <Link href="/dashboard/campaigns" className="btn-primary text-sm">
+            <Link href="/dashboard/campaigns/new" className="btn-primary text-sm">
               Create Campaign
             </Link>
           </div>
