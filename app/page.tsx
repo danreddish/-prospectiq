@@ -75,26 +75,40 @@ export default function HomePage() {
             <img
               src="/prospectiq-logo.png"
               alt="ProspectIQ"
-              width={220}
-              height={60}
-              style={{ display: 'block', marginBottom: 24, marginLeft: 'auto', marginRight: 'auto' }}
+              width={320}
+              height={87}
+              style={{ display: 'block', marginBottom: 28, marginLeft: 'auto', marginRight: 'auto', opacity: 0, animation: 'piqFade 0.7s ease 0.1s forwards' }}
             />
-            <span className="inline-block bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase">
+            <span
+              className="inline-block bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase"
+              style={{ opacity: 0, animation: 'piqFade 0.7s ease 0.3s forwards' }}
+            >
               Now in Beta
             </span>
 
-            <h1 className="text-6xl md:text-7xl font-display text-brand-cream mt-7 leading-tight tracking-wide">
+            <h1
+              className="text-6xl md:text-7xl font-display text-brand-cream mt-7 leading-tight tracking-wide"
+              style={{ opacity: 0, animation: 'piqFade 0.8s ease 0.5s forwards' }}
+            >
               Find High-Net-Worth Clients{' '}
               <span className="text-brand-rose-gold">Before Your Competitors Do</span>
             </h1>
 
-            <TypingHero />
+            <div style={{ opacity: 0, animation: 'piqFade 0.7s ease 0.75s forwards' }}>
+              <TypingHero />
+            </div>
 
-            <p className="text-brand-beige text-lg mt-6 leading-relaxed max-w-2xl mx-auto">
+            <p
+              className="text-brand-beige text-lg mt-6 leading-relaxed max-w-2xl mx-auto"
+              style={{ opacity: 0, animation: 'piqFade 0.7s ease 0.9s forwards' }}
+            >
               ProspectIQ finds real directors, executives, and business owners from verified public data sources worldwide. Scores them by wealth signals. Generates personalised outreach sequences you can send today. Built for wealth managers, IFAs, and mortgage brokers.
             </p>
 
-            <div className="flex gap-4 mt-10 justify-center">
+            <div
+              className="flex gap-4 mt-10 justify-center"
+              style={{ opacity: 0, animation: 'piqFade 0.7s ease 1.05s forwards' }}
+            >
               <Link href="/auth/signup" className="btn-primary text-base">
                 Start Free Trial
               </Link>
@@ -103,7 +117,10 @@ export default function HomePage() {
               </a>
             </div>
 
-            <div className="flex gap-10 mt-12 justify-center">
+            <div
+              className="flex gap-10 mt-12 justify-center"
+              style={{ opacity: 0, animation: 'piqFade 0.7s ease 1.2s forwards' }}
+            >
               {[
                 { metric: '270M+', label: 'Verified professionals worldwide' },
                 { metric: '200+', label: 'Countries covered' },
