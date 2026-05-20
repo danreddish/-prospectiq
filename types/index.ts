@@ -18,6 +18,16 @@ export interface Profile {
 export type PlanTier = 'free' | 'trial' | 'starter' | 'professional' | 'growth'
 export type PlanStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid'
 
+export interface ServiceProfile {
+  what_you_do: string | null
+  who_you_help: string | null
+  key_outcomes: string | null
+  minimum_threshold: string | null
+  geographic_focus: string | null
+}
+
+export type AudienceMode = 'match_profile' | 'different_audience'
+
 export interface Campaign {
   id: string
   user_id: string
@@ -25,6 +35,9 @@ export interface Campaign {
   niche: string | null
   sender_name: string | null
   prospect_count: number
+  service_profile: ServiceProfile | null
+  custom_instructions: string | null
+  audience_mode: AudienceMode | null
   created_at: string
   updated_at: string
 }
@@ -52,6 +65,13 @@ export interface Prospect {
   outreach: OutreachSequence
   status: ProspectStatus
   error_message: string | null
+  // Companies House financial data (UK HNW source only)
+  company_number: string | null
+  accounts_category: string | null
+  turnover: number | null
+  total_assets: number | null
+  employee_count: number | null
+  accounts_last_filed: string | null
   created_at: string
   updated_at: string
 }

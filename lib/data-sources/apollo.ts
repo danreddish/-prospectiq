@@ -71,6 +71,7 @@ export interface ApolloProspect {
 
 export interface ApolloSearchParams {
   person_locations?: string[]
+  organization_locations?: string[]
   person_seniorities?: string[]
   person_titles?: string[]
   q_organization_keyword_tags?: string[]

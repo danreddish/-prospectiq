@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { researchProspect } from '@/lib/ai-engine'
+import { researchProspect, type ProspectFinancials } from '@/lib/ai-engine'
 import { enrichWithApollo } from '@/lib/data-sources/apollo'
+import { getCompanyFinancials, wealthCeilingFromAccounts, formatAccountsCategory } from '@/lib/data-sources/companies-house'
 import { z } from 'zod'
 
 const ResearchSchema = z.object({
@@ -13,6 +14,7 @@ const ResearchSchema = z.object({
       company: z.string().optional(),
       location: z.string().optional(),
       linkedin_url: z.string().optional().or(z.literal('')),
+      company_number: z.string().optional(),
     })
   ).min(1).max(1),
 })
@@ -38,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   // Get campaign + profile in parallel (saves ~300ms)
   const [campaignRes, profileRes] = await Promise.all([
-    supabase.from('campaigns').select('id, niche, sender_name, prospect_count, service_profile').eq('id', campaign_id).eq('user_id', user.id).single(),
+    supabase.from('campaigns').select('id, niche, sender_name, prospect_count, service_profile, custom_instructions').eq('id', campaign_id).eq('user_id', user.id).single(),
     supabase.from('profiles').select('niche, sender_name, service_profile').eq('id', user.id).single(),
   ])
 
@@ -60,23 +62,23 @@ export async function POST(req: NextRequest) {
     geographic_focus: campaignSP.geographic_focus || accountSP.geographic_focus || null,
   }
 
-  const context = {
-    niche: campaign.niche || profile?.niche || 'Wealth management',
-    senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
-    serviceProfile,
-  }
-
-  // Check if this prospect already exists as 'pending' (found but not yet researched)
-  let prospectId: string
+  // Check if this prospect already has a company_number stored from the find step
+  // (so we don't lose it when re-running research on a pending prospect)
+  let storedCompanyNumber: string | null = null
   const { data: existingPending } = await supabase
     .from('prospects')
-    .select('id')
+    .select('id, company_number')
     .eq('campaign_id', campaign_id)
     .eq('name', input.name)
     .eq('status', 'pending')
     .limit(1)
     .single()
 
+  if (existingPending?.company_number) storedCompanyNumber = existingPending.company_number
+
+  const effectiveCompanyNumber = input.company_number || storedCompanyNumber
+
+  let prospectId: string
   if (existingPending) {
     // Update existing pending prospect to processing
     prospectId = existingPending.id
@@ -93,6 +95,7 @@ export async function POST(req: NextRequest) {
         company: input.company || null,
         location: input.location || null,
         linkedin_url: input.linkedin_url || null,
+        company_number: effectiveCompanyNumber,
         status: 'processing',
       })
       .select('id')
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
     prospectId = inserted.id
   }
 
-  // Research + Apollo enrichment in parallel
+  // Research + Apollo enrichment + CH financials in parallel
   try {
     // Split name for Apollo lookup
     const nameParts = input.name.split(' ')
@@ -114,16 +117,44 @@ export async function POST(req: NextRequest) {
     // Build fallback LinkedIn search URL
     const linkedinSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(input.name + ' ' + (input.company || ''))}`
 
-    console.log(`[Research] Starting for: ${input.name} at ${input.company || 'unknown'}`)
+    console.log(`[Research] Starting for: ${input.name} at ${input.company || 'unknown'}${effectiveCompanyNumber ? ` (CH ${effectiveCompanyNumber})` : ''}`)
 
-    // Run Apollo enrichment and AI research simultaneously
-    const [apolloResult, research] = await Promise.all([
+    // Pull Apollo enrichment and CH financials in parallel BEFORE research,
+    // so research can use the financial data to apply hard scoring caps.
+    const [apolloResult, chFinancials] = await Promise.all([
       enrichWithApollo(firstName, lastName, input.company || '').catch((err) => {
         console.error('[Research] Apollo enrichment failed:', err)
         return null
       }),
-      researchProspect(input, context),
+      effectiveCompanyNumber
+        ? getCompanyFinancials(effectiveCompanyNumber).catch((err) => {
+            console.error('[Research] CH financials failed:', err)
+            return null
+          })
+        : Promise.resolve(null),
     ])
+
+    // Build the financials package for the AI engine
+    let financialsForAi: ProspectFinancials | null = null
+    if (chFinancials) {
+      financialsForAi = {
+        accountsCategory: chFinancials.accountsCategory,
+        hasFiledAccounts: chFinancials.hasFiledAccounts,
+        companyStatus: chFinancials.companyStatus,
+        dateOfCreation: chFinancials.dateOfCreation,
+        wealthCeiling: wealthCeilingFromAccounts(chFinancials.accountsCategory, chFinancials.companyStatus),
+        formattedCategory: formatAccountsCategory(chFinancials.accountsCategory),
+      }
+      console.log(`[Research] CH financials: ${financialsForAi.formattedCategory}, ceiling: ${financialsForAi.wealthCeiling ?? 'none'}`)
+    }
+
+    const research = await researchProspect(input, {
+      niche: campaign.niche || profile?.niche || 'Wealth management',
+      senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
+      serviceProfile,
+      customInstructions: campaign.custom_instructions || null,
+      financials: financialsForAi,
+    })
 
     // Use Apollo LinkedIn URL if found, otherwise use search URL
     const linkedinUrl = apolloResult?.linkedin_url || input.linkedin_url || linkedinSearchUrl
@@ -139,6 +170,9 @@ export async function POST(req: NextRequest) {
         email: apolloEmail,
         phone: apolloPhone,
         headline: apolloHeadline,
+        company_number: effectiveCompanyNumber,
+        accounts_category: chFinancials?.accountsCategory || null,
+        accounts_last_filed: chFinancials?.lastAccountsMadeUpTo || null,
         research_notes: research.research_notes,
         wealth_estimate: research.wealth_estimate,
         est_age: research.est_age,
@@ -160,6 +194,7 @@ export async function POST(req: NextRequest) {
         linkedin_url: linkedinUrl,
         email: apolloEmail,
         apollo_match: !!apolloResult?.linkedin_url,
+        accounts_category: chFinancials?.accountsCategory || null,
       }],
       completed: 1,
       failed: 0,

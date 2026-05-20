@@ -338,7 +338,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
       <div className="text-center py-20">
         <h2 className="text-brand-cream text-xl font-display mb-2">{campaign.name}</h2>
         <p className="text-brand-beige mb-6">No completed prospects yet. Add prospects and run research.</p>
-        <a href="/dashboard/campaigns" className="btn-primary text-sm">
+        <a href="/dashboard/campaigns/new" className="btn-primary text-sm">
           Add Prospects
         </a>
       </div>
@@ -360,7 +360,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
           </p>
           <div className="flex gap-2 mt-3">
             <a
-              href={`/dashboard/campaigns?campaign=${campaign.id}`}
+              href={`/dashboard/campaigns/new?campaign=${campaign.id}`}
               className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
             >
               + Find More
@@ -571,6 +571,65 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                 </div>
               ))}
             </div>
+
+            {/* Companies House verified data (UK HNW source only) */}
+            {selected.accounts_category && (() => {
+              const cat = selected.accounts_category.toLowerCase()
+              const isWarning = cat.includes('dormant') || cat.includes('micro')
+              const label = cat.includes('dormant') ? 'Dormant'
+                : cat.includes('micro') ? 'Micro-entity'
+                : cat.includes('small') ? 'Small'
+                : cat.includes('abridged') ? 'Abridged'
+                : cat.includes('medium') ? 'Medium'
+                : cat.includes('full') ? 'Full'
+                : cat.includes('group') ? 'Group'
+                : cat.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+
+              const description = cat.includes('dormant')
+                ? 'No trading activity in latest accounts'
+                : cat.includes('micro')
+                ? 'Turnover under £632k, balance sheet under £316k'
+                : cat.includes('small')
+                ? 'Turnover under £10.2M, balance sheet under £5.1M'
+                : cat.includes('medium')
+                ? 'Turnover under £36M, balance sheet under £18M'
+                : cat.includes('full') || cat.includes('group')
+                ? 'Full statutory accounts filed'
+                : null
+
+              const filed = selected.accounts_last_filed
+                ? new Date(selected.accounts_last_filed).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+                : null
+
+              return (
+                <div className={`rounded-lg p-3 mt-3 border ${isWarning ? 'bg-amber-950/20 border-amber-700/40' : 'bg-brand-charcoal-deep border-brand-charcoal'}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-brand-beige text-[10px] uppercase tracking-wide">Companies House Verified</p>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${isWarning ? 'bg-amber-700/40 text-amber-200' : 'bg-brand-charcoal text-brand-cream'}`}>
+                          {label}
+                        </span>
+                      </div>
+                      {description && (
+                        <p className="text-brand-cream text-xs mt-1">{description}</p>
+                      )}
+                    </div>
+                    {filed && (
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-brand-beige text-[10px] uppercase tracking-wide">Last filed</p>
+                        <p className="text-brand-cream text-xs font-semibold mt-0.5">{filed}</p>
+                      </div>
+                    )}
+                  </div>
+                  {isWarning && (
+                    <p className="text-amber-200/80 text-[10px] mt-2">
+                      Wealth score has been capped based on filed accounts. Cross-check on the Companies House website if needed.
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Key trigger */}
             {selected.key_trigger && (
