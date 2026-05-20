@@ -71,31 +71,30 @@ export default function HomePage() {
         <div className="absolute -top-40 -right-20 w-[600px] h-[600px] rounded-full bg-brand-rose-gold/5 blur-3xl" />
         <HeroVideo />
 
-        <div className="max-w-6xl mx-auto relative">
-          <div className="max-w-2xl">
+        <div className="max-w-5xl mx-auto relative text-center">
             <img
               src="/prospectiq-logo.png"
               alt="ProspectIQ"
               width={220}
               height={60}
-              style={{ display: 'block', marginBottom: 24 }}
+              style={{ display: 'block', marginBottom: 24, marginLeft: 'auto', marginRight: 'auto' }}
             />
             <span className="inline-block bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase">
               Now in Beta
             </span>
 
-            <h1 className="text-5xl font-display text-brand-cream mt-7 leading-tight tracking-wide">
+            <h1 className="text-6xl md:text-7xl font-display text-brand-cream mt-7 leading-tight tracking-wide">
               Find High-Net-Worth Clients{' '}
               <span className="text-brand-rose-gold">Before Your Competitors Do</span>
             </h1>
 
             <TypingHero />
 
-            <p className="text-brand-beige text-lg mt-6 leading-relaxed max-w-xl">
+            <p className="text-brand-beige text-lg mt-6 leading-relaxed max-w-2xl mx-auto">
               ProspectIQ finds real directors, executives, and business owners from verified public data sources worldwide. Scores them by wealth signals. Generates personalised outreach sequences you can send today. Built for wealth managers, IFAs, and mortgage brokers.
             </p>
 
-            <div className="flex gap-4 mt-10">
+            <div className="flex gap-4 mt-10 justify-center">
               <Link href="/auth/signup" className="btn-primary text-base">
                 Start Free Trial
               </Link>
@@ -104,7 +103,7 @@ export default function HomePage() {
               </a>
             </div>
 
-            <div className="flex gap-10 mt-12">
+            <div className="flex gap-10 mt-12 justify-center">
               {[
                 { metric: '270M+', label: 'Verified professionals worldwide' },
                 { metric: '200+', label: 'Countries covered' },
@@ -116,7 +115,6 @@ export default function HomePage() {
                 </div>
               ))}
             </div>
-          </div>
         </div>
       </section>
 
