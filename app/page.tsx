@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import HeroVideo from './components/HeroVideo'
 
 export default function HomePage() {
   const plans = [
@@ -41,8 +42,8 @@ export default function HomePage() {
             <span className="text-brand-cream text-xl font-display">ProspectIQ</span>
           </div>
           <div className="flex items-center gap-6">
-            <a href="#how-it-works" className="text-brand-beige text-sm hover:text-brand-cream transition-colors hidden sm:inline">
-              How It Works
+            <a href="/demo" className="text-brand-beige text-sm hover:text-brand-cream transition-colors hidden sm:inline">
+              Live Demo
             </a>
             <a href="#pricing" className="text-brand-beige text-sm hover:text-brand-cream transition-colors hidden sm:inline">
               Pricing
@@ -67,6 +68,7 @@ export default function HomePage() {
           }}
         />
         <div className="absolute -top-40 -right-20 w-[600px] h-[600px] rounded-full bg-brand-rose-gold/5 blur-3xl" />
+        <HeroVideo />
 
         <div className="max-w-6xl mx-auto relative">
           <div className="max-w-2xl">
@@ -95,7 +97,7 @@ export default function HomePage() {
                 Start Free Trial
               </Link>
               <a href="#how-it-works" className="btn-secondary text-base">
-                See How It Works
+                See It In Action
               </a>
             </div>
 
