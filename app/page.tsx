@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import HeroVideo from './components/HeroVideo'
+import TypingHero from './components/TypingHero'
 
 export default function HomePage() {
   const plans = [
@@ -73,10 +74,10 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto relative">
           <div className="max-w-2xl">
             <img
-              src="/logo.png"
-              alt="AI Wealth Partners"
-              width={180}
-              height={103}
+              src="/prospectiq-logo.png"
+              alt="ProspectIQ"
+              width={220}
+              height={60}
               style={{ display: 'block', marginBottom: 24 }}
             />
             <span className="inline-block bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase">
@@ -87,6 +88,8 @@ export default function HomePage() {
               Find High-Net-Worth Clients{' '}
               <span className="text-brand-rose-gold">Before Your Competitors Do</span>
             </h1>
+
+            <TypingHero />
 
             <p className="text-brand-beige text-lg mt-6 leading-relaxed max-w-xl">
               ProspectIQ finds real directors, executives, and business owners from verified public data sources worldwide. Scores them by wealth signals. Generates personalised outreach sequences you can send today. Built for wealth managers, IFAs, and mortgage brokers.
@@ -178,7 +181,7 @@ export default function HomePage() {
                 desc: 'Each prospect comes with a research dossier, wealth score, priority tier, LinkedIn profile link, and a 3-step personalised outreach sequence ready to copy and send.',
               },
             ].map((s, i) => (
-              <div key={i} className="bg-brand-charcoal-deeper rounded-2xl p-8 border border-brand-charcoal-deep relative overflow-hidden">
+              <div key={i} className="bg-white/[0.03] backdrop-blur-sm rounded-2xl p-8 border border-white/10 relative overflow-hidden shadow-lg shadow-black/30 transition-all duration-300 hover:bg-white/[0.05] hover:border-brand-rose-gold/20">
                 <span className="absolute -top-3 right-4 text-8xl font-display text-brand-charcoal-deep">{s.step}</span>
                 <div className="relative">
                   <div className="w-12 h-12 rounded-xl bg-brand-rose-gold/10 border border-brand-rose-gold/20 flex items-center justify-center mb-5">
@@ -228,7 +231,7 @@ export default function HomePage() {
                 examples: 'Real estate CEOs in Dubai, fintech founders in Singapore, PE directors in Zurich, tech executives in New York',
               },
             ].map((source, i) => (
-              <div key={i} className="bg-brand-charcoal-deeper rounded-2xl p-8 border border-brand-charcoal-deep">
+              <div key={i} className="bg-white/[0.03] backdrop-blur-sm rounded-2xl p-8 border border-white/10 shadow-lg shadow-black/30 transition-all duration-300 hover:bg-white/[0.05] hover:border-brand-rose-gold/20">
                 <span className={`text-[10px] px-2.5 py-1 rounded font-bold uppercase ${source.badgeColor}`}>
                   {source.badge}
                 </span>
@@ -311,7 +314,7 @@ export default function HomePage() {
             {plans.map((plan, i) => (
               <div
                 key={i}
-                className={`rounded-2xl p-8 text-left relative ${plan.pop ? 'bg-brand-charcoal-deeper border-2 border-brand-rose-gold scale-[1.02]' : 'bg-brand-charcoal-deeper border border-brand-charcoal-deep'}`}
+                className={`rounded-2xl p-8 text-left relative transition-all duration-300 hover:scale-[1.04] hover:shadow-2xl hover:shadow-brand-rose-gold/10 hover:border-brand-rose-gold/40 cursor-pointer ${plan.pop ? 'bg-white/[0.05] backdrop-blur-sm border-2 border-brand-rose-gold scale-[1.02]' : 'bg-white/[0.03] backdrop-blur-sm border border-white/10'}`}
               >
                 {plan.pop && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
