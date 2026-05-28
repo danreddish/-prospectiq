@@ -531,6 +531,18 @@ export default function CampaignsPage() {
 
   const selectedCount = foundProspects.filter((p) => p.selected).length
 
+  // ── Step navigation helper ─────────────────
+
+  function getStepClickHandler(targetKey: string): (() => void) | undefined {
+    if (step === 'researching') return undefined
+    const stepOrder: Step[] = ['create', 'find', 'review', 'researching']
+    const currentIdx = stepOrder.indexOf(step === 'add-manual' ? 'find' : step)
+    const targetIdx = stepOrder.indexOf(targetKey as Step)
+    if (targetIdx >= currentIdx) return undefined
+    if (targetKey === 'create' && campaignId) return undefined
+    return () => setStep(targetKey as Step)
+  }
+
   // ── Render ─────────────────────────────────
 
   return (
@@ -546,9 +558,13 @@ export default function CampaignsPage() {
           const steps: Step[] = ['create', 'find', 'review', 'researching']
           const currentIdx = steps.indexOf(step === 'add-manual' ? 'find' : step)
           const isActive = i <= currentIdx
+          const clickHandler = getStepClickHandler(s.key)
           return (
             <div key={s.key} className="flex items-center gap-3">
-              <div className={`flex items-center gap-2 ${isActive ? 'text-brand-cream' : 'text-brand-charcoal'}`}>
+              <div
+                className={`flex items-center gap-2 ${isActive ? 'text-brand-cream' : 'text-brand-charcoal'} ${clickHandler ? 'cursor-pointer hover:opacity-75 transition-opacity' : ''}`}
+                onClick={clickHandler}
+              >
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${isActive ? 'bg-brand-rose-gold text-brand-dark' : 'bg-brand-charcoal-deep text-brand-charcoal'}`}>
                   {i + 1}
                 </div>

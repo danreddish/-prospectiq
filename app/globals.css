@@ -40,7 +40,7 @@ input, textarea, select {
 
 /* Button base */
 .btn-primary {
-  @apply bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark font-bold px-6 py-3 rounded-lg transition-all hover:opacity-90 active:scale-[0.98];
+  @apply bg-gradient-to-r from-brand-rose-gold to-brand-rose-gold-light text-brand-dark font-bold px-6 py-3 rounded-lg transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
 }
 
 .btn-secondary {
