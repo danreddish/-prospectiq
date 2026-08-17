@@ -4,3 +4,16 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# The /embed route is designed to be framed by the AIWP marketing site.
+# No X-Frame-Options is set anywhere in this repo, so framing is controlled
+# by this frame-ancestors policy alone.
+[[headers]]
+  for = "/embed"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors 'self' https://aiwealthpartners.co.uk https://www.aiwealthpartners.co.uk"
+
+[[headers]]
+  for = "/embed/*"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors 'self' https://aiwealthpartners.co.uk https://www.aiwealthpartners.co.uk"
