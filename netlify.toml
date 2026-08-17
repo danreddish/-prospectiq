@@ -8,12 +8,19 @@
 # The /embed route is designed to be framed by the AIWP marketing site.
 # No X-Frame-Options is set anywhere in this repo, so framing is controlled
 # by this frame-ancestors policy alone.
+#
+# NOTE: @netlify/plugin-nextjs serves app-router pages through its own handler,
+# so these rules do NOT reach /embed. The policy that actually applies is the
+# one in next.config.js headers(). These blocks are kept for any non-Next asset
+# served under /embed and MUST stay identical to next.config.js: browsers
+# intersect multiple CSP headers, so a narrower value here would silently
+# override the wider one there.
 [[headers]]
   for = "/embed"
   [headers.values]
-    Content-Security-Policy = "frame-ancestors 'self' https://aiwealthpartners.co.uk https://www.aiwealthpartners.co.uk"
+    Content-Security-Policy = "frame-ancestors 'self' https://aiwealthpartners.co.uk https://www.aiwealthpartners.co.uk https://*.netlify.app;"
 
 [[headers]]
   for = "/embed/*"
   [headers.values]
-    Content-Security-Policy = "frame-ancestors 'self' https://aiwealthpartners.co.uk https://www.aiwealthpartners.co.uk"
+    Content-Security-Policy = "frame-ancestors 'self' https://aiwealthpartners.co.uk https://www.aiwealthpartners.co.uk https://*.netlify.app;"
