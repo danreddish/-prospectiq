@@ -12,54 +12,58 @@ const FindSchema = z.object({
   audience_mode: z.enum(['match_profile', 'different_audience']).optional(),
 })
 
-// ── UK Geography Lock ──
-// Apollo's person_locations does fuzzy matching. Passing just "United Kingdom"
-// often leaks US/Commonwealth results. Including specific cities anchors the
-// search much more reliably.
+// ── UK Geography Lock (v75.1) ──
+// v75 sent bare city names like "Reading", "Cambridge", "Birmingham" — these
+// also match Reading PA, Cambridge MA, Birmingham AL. Cowork's post-v75 debug
+// found 1 US Reading result across 53 UK prospects. Fix: use "City, United
+// Kingdom" strings so Apollo's fuzzy matcher can't cross-match US cities of
+// the same name. Country names stay in the array to catch prospects whose
+// location Apollo has stored as just "England" or "Scotland".
 const UK_LOCATIONS = [
   'United Kingdom',
   'England',
   'Scotland',
   'Wales',
   'Northern Ireland',
-  'London',
-  'Manchester',
-  'Birmingham',
-  'Leeds',
-  'Liverpool',
-  'Sheffield',
-  'Bristol',
-  'Edinburgh',
-  'Glasgow',
-  'Cardiff',
-  'Belfast',
-  'Newcastle',
-  'Nottingham',
-  'Cambridge',
-  'Oxford',
-  'Brighton',
-  'Reading',
+  'London, United Kingdom',
+  'Manchester, United Kingdom',
+  'Birmingham, United Kingdom',
+  'Leeds, United Kingdom',
+  'Liverpool, United Kingdom',
+  'Sheffield, United Kingdom',
+  'Bristol, United Kingdom',
+  'Edinburgh, United Kingdom',
+  'Glasgow, United Kingdom',
+  'Cardiff, United Kingdom',
+  'Belfast, United Kingdom',
+  'Newcastle, United Kingdom',
+  'Nottingham, United Kingdom',
+  'Cambridge, United Kingdom',
+  'Oxford, United Kingdom',
+  'Brighton, United Kingdom',
+  'Reading, United Kingdom',
 ]
 
 // Country aliases the user might type, mapped to the strict location array.
+// All city entries use "City, Country" form for the same anti-collision reason.
 const GEOGRAPHY_LOCK: Record<string, string[]> = {
   uk: UK_LOCATIONS,
   'united kingdom': UK_LOCATIONS,
   britain: UK_LOCATIONS,
   'great britain': UK_LOCATIONS,
   england: UK_LOCATIONS,
-  scotland: ['Scotland', 'Edinburgh', 'Glasgow', 'Aberdeen', 'Dundee'],
-  wales: ['Wales', 'Cardiff', 'Swansea', 'Newport'],
-  ireland: ['Ireland', 'Dublin', 'Cork', 'Galway'],
-  uae: ['United Arab Emirates', 'Dubai', 'Abu Dhabi', 'Sharjah'],
-  'united arab emirates': ['United Arab Emirates', 'Dubai', 'Abu Dhabi', 'Sharjah'],
-  dubai: ['Dubai', 'United Arab Emirates'],
+  scotland: ['Scotland', 'Edinburgh, United Kingdom', 'Glasgow, United Kingdom', 'Aberdeen, United Kingdom', 'Dundee, United Kingdom'],
+  wales: ['Wales', 'Cardiff, United Kingdom', 'Swansea, United Kingdom', 'Newport, United Kingdom'],
+  ireland: ['Ireland', 'Dublin, Ireland', 'Cork, Ireland', 'Galway, Ireland'],
+  uae: ['United Arab Emirates', 'Dubai, United Arab Emirates', 'Abu Dhabi, United Arab Emirates', 'Sharjah, United Arab Emirates'],
+  'united arab emirates': ['United Arab Emirates', 'Dubai, United Arab Emirates', 'Abu Dhabi, United Arab Emirates', 'Sharjah, United Arab Emirates'],
+  dubai: ['Dubai, United Arab Emirates', 'United Arab Emirates'],
   singapore: ['Singapore'],
-  switzerland: ['Switzerland', 'Zurich', 'Geneva', 'Basel', 'Bern'],
-  germany: ['Germany', 'Berlin', 'Munich', 'Frankfurt', 'Hamburg'],
-  france: ['France', 'Paris', 'Lyon', 'Marseille'],
-  australia: ['Australia', 'Sydney', 'Melbourne', 'Brisbane', 'Perth'],
-  canada: ['Canada', 'Toronto', 'Vancouver', 'Montreal', 'Calgary'],
+  switzerland: ['Switzerland', 'Zurich, Switzerland', 'Geneva, Switzerland', 'Basel, Switzerland', 'Bern, Switzerland'],
+  germany: ['Germany', 'Berlin, Germany', 'Munich, Germany', 'Frankfurt, Germany', 'Hamburg, Germany'],
+  france: ['France', 'Paris, France', 'Lyon, France', 'Marseille, France'],
+  australia: ['Australia', 'Sydney, Australia', 'Melbourne, Australia', 'Brisbane, Australia', 'Perth, Australia'],
+  canada: ['Canada', 'Toronto, Canada', 'Vancouver, Canada', 'Montreal, Canada', 'Calgary, Canada'],
   usa: ['United States'],
   'united states': ['United States'],
   america: ['United States'],
@@ -97,8 +101,6 @@ export async function POST(req: NextRequest) {
 
   const { campaign_id, icp_description, source, custom_instructions, audience_mode } = parsed.data
 
-  // Load campaign + profile so we know the user's service profile and can
-  // honour the audience_mode toggle.
   const [campaignRes, profileRes] = await Promise.all([
     supabase.from('campaigns')
       .select('id, service_profile, custom_instructions, audience_mode')
@@ -128,9 +130,6 @@ export async function POST(req: NextRequest) {
   try {
     const startTime = Date.now()
 
-    // Build the context block the parser sees.
-    // The audience_mode toggle controls whether the seller's profile is
-    // injected as positive ICP context or stripped entirely.
     let contextBlock = ''
     if (effectiveAudienceMode === 'match_profile' && serviceProfile.who_you_help) {
       contextBlock = `\n\nThe sender wants prospects SIMILAR to their existing client base. The sender helps: "${serviceProfile.who_you_help}".${serviceProfile.minimum_threshold ? ` Minimum threshold: ${serviceProfile.minimum_threshold}.` : ''} Use this as a positive matching signal — find prospects who fit this profile.`
@@ -169,9 +168,17 @@ CRITICAL RULES about Apollo:
 
 3. Do NOT combine q_keywords AND person_titles AND q_organization_keyword_tags all at once. Three intersecting filters routinely return zero results. Pick the TWO that best fit the ICP. Usually that's person_titles + (q_organization_keyword_tags OR q_keywords).
 
-4. person_seniorities: ALWAYS include. Default is ["director","c_suite","owner","partner","founder"] for founders, swap to ["director","c_suite","vp","head","manager"] for non-founders.
+4. person_seniorities: ALWAYS include. Pick from Apollo's fixed list: "owner","founder","c_suite","partner","vp","head","director","manager","senior","entry","intern". Use these RULES so runs stay consistent for the same ICP shape:
+   - If the ICP mentions founder/co-founder/founding: use exactly ["founder","c_suite","owner"] (in that order).
+   - If the ICP mentions CEO/CTO/CFO/COO/CMO/CxO or "chief …": use ["c_suite","founder","owner"].
+   - If the ICP mentions owner/proprietor/managing director/MD/business owner: use ["owner","founder","partner","c_suite"].
+   - If the ICP mentions partner/associate at a firm: use ["partner","c_suite","director"].
+   - If the ICP mentions director/head/VP/executive/senior: use ["director","c_suite","vp","head"].
+   - If the ICP mentions manager/mid-level: use ["manager","director","senior"].
+   - Default (unclear seniority signal): ["director","c_suite","owner","partner","founder"].
+   Pick ONE rule based on the strongest signal in the ICP. Do not merge lists. Do not add seniorities the ICP does not imply.
 
-5. person_locations: STRICT. Always return an ARRAY of strings, never a single string. For a country, include the country name AND its major cities. For the UK include: ["United Kingdom","England","Scotland","Wales","Northern Ireland","London","Manchester","Birmingham","Leeds","Edinburgh","Glasgow","Bristol"].
+5. person_locations: STRICT. Always return an ARRAY of strings, never a single string. For a country, include the country name AND its major cities in "City, Country" form to avoid US/UK city name collisions (Reading, Cambridge, Birmingham, etc). For the UK, prefer the orchestrator's canonical UK list — it will overwrite what you produce here anyway when it detects a UK cue. Example: ["United Kingdom","England","Scotland","Wales","Northern Ireland","London, United Kingdom","Manchester, United Kingdom","Birmingham, United Kingdom"].
 
 6. organization_locations: For region-bound searches, ALSO set organization_locations to the same array. This stops US-based people who happen to work for UK companies (and vice versa) leaking in.
 
@@ -179,10 +186,10 @@ RETURN FORMAT (only include fields you are setting):
 {
   "q_keywords": "family office",
   "person_titles": ["Founder","CEO"],
-  "person_seniorities": ["director","c_suite","owner","partner"],
+  "person_seniorities": ["founder","c_suite","owner"],
   "q_organization_keyword_tags": ["technology"],
-  "person_locations": ["United Kingdom","London","Manchester"],
-  "organization_locations": ["United Kingdom","London","Manchester"],
+  "person_locations": ["United Kingdom","London, United Kingdom","Manchester, United Kingdom"],
+  "organization_locations": ["United Kingdom","London, United Kingdom","Manchester, United Kingdom"],
   "searchTerms": ["tech founders UK"]
 }
 
@@ -214,7 +221,6 @@ searchTerms: 1-3 summary terms for display only.${contextBlock}`,
 
     // ─── Apollo-specific guards ────────────────
     if (source === 'global_prospects') {
-      // Trim q_keywords to max 2 meaningful words
       if (searchParams.q_keywords) {
         const words = (searchParams.q_keywords as string).split(/\s+/).filter(Boolean)
         if (words.length > 2) {
@@ -223,8 +229,6 @@ searchTerms: 1-3 summary terms for display only.${contextBlock}`,
         }
       }
 
-      // If the parser supplied no usable signal at all, fall back to extracting
-      // a 2-word keyword from the ICP.
       const hasSignal = !!(searchParams.q_keywords
         || (searchParams.person_titles as string[] | undefined)?.length
         || (searchParams.q_organization_keyword_tags as string[] | undefined)?.length)
@@ -243,15 +247,22 @@ searchTerms: 1-3 summary terms for display only.${contextBlock}`,
         }
       }
 
-      // Default seniorities
-      if (!searchParams.person_seniorities) {
-        searchParams.person_seniorities = ['director', 'c_suite', 'owner', 'partner', 'founder']
+      // ─── Deterministic seniorities backstop (v75.1) ───
+      // Even with the rules in the prompt, Haiku sometimes returns arrays that
+      // drift between runs. Apply the same rule set here to guarantee the
+      // "tech founders → founder-led" pattern holds run to run. This does not
+      // override a sensible list from the parser — it only kicks in when the
+      // list is empty or clearly off-shape.
+      const seniorityFromIcp = inferSeniorities(`${icp_description} ${effectiveCustomInstructions}`)
+      const senList = searchParams.person_seniorities as string[] | undefined
+      const senIsMissing = !senList || senList.length === 0
+      const senIsGeneric = Array.isArray(senList) && senList.length >= 5
+      if (senIsMissing || senIsGeneric || !seniorityMatchesIcp(senList, seniorityFromIcp)) {
+        searchParams.person_seniorities = seniorityFromIcp
+        console.log(`[Find] Seniorities normalised to: ${seniorityFromIcp.join(',')}`)
       }
 
       // ─── HARD GEOGRAPHY LOCK ───
-      // If the user named a country/region anywhere in the ICP or in custom
-      // instructions, force a strict location array. This overrides whatever
-      // the parser produced (which is often a soft single-string country).
       const combinedText = `${icp_description} ${effectiveCustomInstructions}`
       const lockedLocations = detectGeographyLock(combinedText)
       if (lockedLocations) {
@@ -259,7 +270,6 @@ searchTerms: 1-3 summary terms for display only.${contextBlock}`,
         searchParams.organization_locations = lockedLocations
         console.log(`[Find] Geography locked to: ${lockedLocations.slice(0, 3).join(', ')}... (${lockedLocations.length} locations)`)
       } else if (searchParams.person_locations && typeof searchParams.person_locations === 'string') {
-        // Parser gave a string instead of an array, coerce
         searchParams.person_locations = [searchParams.person_locations]
       }
     }
@@ -285,4 +295,45 @@ searchTerms: 1-3 summary terms for display only.${contextBlock}`,
     const message = error instanceof Error ? error.message : 'Finding failed'
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+// ── Deterministic seniority inference (v75.1) ──
+// Given an ICP string, return a fixed seniorities array. Same input → same
+// output, every time. Rules mirror the prompt so a well-behaved LLM output
+// will pass the seniorityMatchesIcp check and be kept; drift falls back here.
+function inferSeniorities(icp: string): string[] {
+  const t = icp.toLowerCase()
+  const has = (words: string[]) => words.some((w) => new RegExp(`\\b${w}\\b`, 'i').test(t))
+
+  if (has(['founder', 'founders', 'co-founder', 'co-founders', 'founding'])) {
+    return ['founder', 'c_suite', 'owner']
+  }
+  if (has(['ceo', 'ceos', 'cto', 'ctos', 'cfo', 'cfos', 'coo', 'coos', 'cmo', 'cmos', 'cio', 'cios', 'cxo', 'chief'])) {
+    return ['c_suite', 'founder', 'owner']
+  }
+  if (has(['owner', 'owners', 'proprietor', 'managing director', 'md ', ' md', 'business owner'])) {
+    return ['owner', 'founder', 'partner', 'c_suite']
+  }
+  if (has(['partner', 'partners', 'associate', 'associates'])) {
+    return ['partner', 'c_suite', 'director']
+  }
+  if (has(['director', 'directors', 'head of', 'heads of', 'vp ', 'vice president', 'executive', 'senior'])) {
+    return ['director', 'c_suite', 'vp', 'head']
+  }
+  if (has(['manager', 'managers', 'mid-level', 'mid level'])) {
+    return ['manager', 'director', 'senior']
+  }
+  return ['director', 'c_suite', 'owner', 'partner', 'founder']
+}
+
+// Consider the parser's list acceptable if it contains the top-priority
+// seniority for the ICP. This keeps sensible LLM lists while still catching
+// drift (e.g. "tech founders" coming back as ["director","c_suite","owner",
+// "partner","founder"] with founder buried at the end).
+function seniorityMatchesIcp(actual: string[] | undefined, expected: string[]): boolean {
+  if (!actual || actual.length === 0) return false
+  const topExpected = expected[0]
+  if (actual[0] === topExpected) return true
+  // Also accept if the top-expected appears in first two positions
+  return actual.slice(0, 2).includes(topExpected)
 }
