@@ -28,6 +28,8 @@ export interface ServiceProfile {
 
 export type AudienceMode = 'match_profile' | 'different_audience'
 
+export type CampaignSource = 'hnw_clients' | 'financial_professionals' | 'global_prospects'
+
 export interface Campaign {
   id: string
   user_id: string
@@ -38,6 +40,9 @@ export interface Campaign {
   service_profile: ServiceProfile | null
   custom_instructions: string | null
   audience_mode: AudienceMode | null
+  // Data source last used to find prospects. Null on campaigns created
+  // before v75.2 added the column.
+  source: CampaignSource | null
   created_at: string
   updated_at: string
 }

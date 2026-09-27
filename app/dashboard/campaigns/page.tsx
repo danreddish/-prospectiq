@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { campaignSourceBadgeLabel } from '@/lib/campaign-sources'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,6 +10,7 @@ interface CampaignRow {
   name: string
   niche: string | null
   audience_mode: string | null
+  source: string | null
   custom_instructions: string | null
   created_at: string
   updated_at: string
@@ -22,7 +24,7 @@ export default async function CampaignsListPage() {
 
   const { data: campaigns } = await supabase
     .from('campaigns')
-    .select('id, name, niche, audience_mode, custom_instructions, created_at, updated_at, prospects(tier, status)')
+    .select('id, name, niche, audience_mode, source, custom_instructions, created_at, updated_at, prospects(tier, status)')
     .eq('user_id', user.id)
     .order('updated_at', { ascending: false })
 
@@ -55,8 +57,9 @@ export default async function CampaignsListPage() {
       ) : (
         <div className="bg-brand-charcoal-deep rounded-xl border border-brand-charcoal overflow-hidden">
           <div className="grid grid-cols-12 gap-3 px-5 py-3 border-b border-brand-charcoal text-brand-beige text-[10px] uppercase tracking-wider font-semibold">
-            <div className="col-span-4">Campaign</div>
-            <div className="col-span-3">Mode</div>
+            <div className="col-span-3">Campaign</div>
+            <div className="col-span-2">Source</div>
+            <div className="col-span-2">Mode</div>
             <div className="col-span-3">Prospects</div>
             <div className="col-span-2 text-right">Updated</div>
           </div>
@@ -69,6 +72,15 @@ export default async function CampaignsListPage() {
               const tierC = c.prospects?.filter((p) => p.tier === 'C').length || 0
               const completed = c.prospects?.filter((p) => p.status === 'completed').length || 0
               const pending = total - completed
+
+              const sourceLabel = campaignSourceBadgeLabel(c.source)
+              const sourceClasses = c.source === 'hnw_clients'
+                ? 'bg-blue-900/40 text-blue-400'
+                : c.source === 'financial_professionals'
+                ? 'bg-green-900/40 text-green-400'
+                : c.source === 'global_prospects'
+                ? 'bg-purple-900/40 text-purple-400'
+                : 'bg-brand-charcoal-dark text-brand-beige'
 
               const modeLabel = c.audience_mode === 'match_profile'
                 ? 'Match my profile'
@@ -89,7 +101,7 @@ export default async function CampaignsListPage() {
                   href={`/dashboard/campaigns/${c.id}`}
                   className="grid grid-cols-12 gap-3 px-5 py-4 hover:bg-brand-charcoal-deeper/50 transition-colors items-center"
                 >
-                  <div className="col-span-4 min-w-0">
+                  <div className="col-span-3 min-w-0">
                     <p className="text-brand-cream font-medium truncate">{c.name}</p>
                     <p className="text-brand-beige text-xs truncate mt-0.5">
                       {c.niche || 'No niche set'}
@@ -102,7 +114,13 @@ export default async function CampaignsListPage() {
                     </p>
                   </div>
 
-                  <div className="col-span-3">
+                  <div className="col-span-2">
+                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] uppercase tracking-wide font-semibold ${sourceClasses}`}>
+                      {sourceLabel}
+                    </span>
+                  </div>
+
+                  <div className="col-span-2">
                     <span className={`inline-block px-2 py-0.5 rounded text-[10px] uppercase tracking-wide font-semibold ${
                       c.audience_mode === 'match_profile'
                         ? 'bg-brand-rose-gold/20 text-brand-rose-gold'

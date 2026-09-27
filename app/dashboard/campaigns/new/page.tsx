@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { CAMPAIGN_SOURCES, mentionsJobTitle } from '@/lib/campaign-sources'
+import { linkedInLinkKind, linkedInLinkLabel, linkedInLinkTooltip } from '@/lib/linkedin'
+import type { CampaignSource } from '@/types'
 
 interface FoundProspect {
   name: string
@@ -56,7 +59,7 @@ export default function CampaignsPage() {
   const [campaignName, setCampaignName] = useState('')
   const [niche, setNiche] = useState('')
   const [senderName, setSenderName] = useState('')
-  const [prospectSource, setProspectSource] = useState<'hnw_clients' | 'financial_professionals' | 'global_prospects'>('hnw_clients')
+  const [prospectSource, setProspectSource] = useState<CampaignSource>('hnw_clients')
 
   // Service profile (campaign-level override of account defaults)
   const [serviceWhat, setServiceWhat] = useState('')
@@ -150,6 +153,7 @@ export default function CampaignsPage() {
           },
           audience_mode: audienceMode,
           custom_instructions: customInstructions.trim() || null,
+          source: prospectSource,
         })
         .select()
         .single()
@@ -189,6 +193,15 @@ export default function CampaignsPage() {
     setFindingStatus(isGlobal ? 'Analysing your prospect criteria...' : isFCA ? 'Analysing your target financial professionals...' : 'Analysing your ideal client profile...')
 
     try {
+      // v75.2: record the data source actually used for this run. Keeps
+      // campaigns.source pointing at the latest source, including when the
+      // user comes back and runs Find again with a different one.
+      const { error: sourceError } = await supabase
+        .from('campaigns')
+        .update({ source: prospectSource })
+        .eq('id', campaignId)
+      if (sourceError) log(`Could not record data source: ${sourceError.message}`)
+
       // STEP 1: Claude generates search parameters
       log('Step 1: Asking AI to generate search params...')
       const findRes = await fetch('/api/prospects/find', {
@@ -531,6 +544,12 @@ export default function CampaignsPage() {
 
   const selectedCount = foundProspects.filter((p) => p.selected).length
 
+  // v75.2: Companies House indexes company names and only tells us someone is
+  // a director, so an ICP written in job titles will not match well. Plain
+  // client-side check, no AI call. The user can ignore it and search anyway.
+  const showJobTitleNotice =
+    prospectSource === 'hnw_clients' && mentionsJobTitle(icpDescription)
+
   // ── Step navigation helper ─────────────────
 
   function getStepClickHandler(targetKey: string): (() => void) | undefined {
@@ -655,31 +674,21 @@ export default function CampaignsPage() {
 
             <div>
               <label className="block text-brand-cream text-sm font-medium mb-2.5">Data source</label>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setProspectSource('hnw_clients')}
-                  className={`flex-1 p-3 rounded-lg border text-left transition-colors ${prospectSource === 'hnw_clients' ? 'border-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal hover:border-brand-charcoal-dark'}`}
-                >
-                  <p className={`text-sm font-semibold ${prospectSource === 'hnw_clients' ? 'text-brand-rose-gold' : 'text-brand-cream'}`}>HNW Clients (UK)</p>
-                  <p className="text-brand-beige text-xs mt-0.5">Company directors from Companies House</p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProspectSource('financial_professionals')}
-                  className={`flex-1 p-3 rounded-lg border text-left transition-colors ${prospectSource === 'financial_professionals' ? 'border-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal hover:border-brand-charcoal-dark'}`}
-                >
-                  <p className={`text-sm font-semibold ${prospectSource === 'financial_professionals' ? 'text-brand-rose-gold' : 'text-brand-cream'}`}>Financial Pros (UK)</p>
-                  <p className="text-brand-beige text-xs mt-0.5">IFAs, wealth managers from FCA Register</p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProspectSource('global_prospects')}
-                  className={`flex-1 p-3 rounded-lg border text-left transition-colors ${prospectSource === 'global_prospects' ? 'border-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal hover:border-brand-charcoal-dark'}`}
-                >
-                  <p className={`text-sm font-semibold ${prospectSource === 'global_prospects' ? 'text-brand-rose-gold' : 'text-brand-cream'}`}>Global Prospects</p>
-                  <p className="text-brand-beige text-xs mt-0.5">Directors and executives worldwide via Apollo</p>
-                </button>
+              <div className="flex gap-3 items-stretch">
+                {CAMPAIGN_SOURCES.map((src) => (
+                  <button
+                    key={src.key}
+                    type="button"
+                    onClick={() => setProspectSource(src.key)}
+                    className={`flex-1 p-3 rounded-lg border text-left transition-colors ${prospectSource === src.key ? 'border-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal hover:border-brand-charcoal-dark'}`}
+                  >
+                    <p className={`text-sm font-semibold ${prospectSource === src.key ? 'text-brand-rose-gold' : 'text-brand-cream'}`}>{src.label}</p>
+                    <p className="text-brand-beige text-xs mt-0.5">{src.detail}</p>
+                    <p className="text-brand-beige text-[11px] mt-2 pt-2 border-t border-brand-charcoal/40 leading-snug">
+                      {src.bestFor}
+                    </p>
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -782,12 +791,8 @@ export default function CampaignsPage() {
           {/* Data source selector */}
           <div className="max-w-2xl mb-6">
             <label className="block text-brand-cream text-sm font-medium mb-2">Data source</label>
-            <div className="flex gap-2">
-              {([
-                { key: 'hnw_clients' as const, label: 'HNW Clients (UK)', sub: 'Companies House' },
-                { key: 'financial_professionals' as const, label: 'Financial Pros (UK)', sub: 'FCA Register' },
-                { key: 'global_prospects' as const, label: 'Global Prospects', sub: 'Apollo 270M+' },
-              ]).map((src) => (
+            <div className="flex gap-2 items-stretch">
+              {CAMPAIGN_SOURCES.map((src) => (
                 <button
                   key={src.key}
                   type="button"
@@ -796,7 +801,10 @@ export default function CampaignsPage() {
                   className={`flex-1 p-2.5 rounded-lg border text-left transition-colors ${prospectSource === src.key ? 'border-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal hover:border-brand-charcoal-dark'}`}
                 >
                   <p className={`text-xs font-semibold ${prospectSource === src.key ? 'text-brand-rose-gold' : 'text-brand-cream'}`}>{src.label}</p>
-                  <p className="text-brand-beige text-[10px] mt-0.5">{src.sub}</p>
+                  <p className="text-brand-beige text-[10px] mt-0.5">{src.compactDetail}</p>
+                  <p className="text-brand-beige text-[10px] mt-1.5 pt-1.5 border-t border-brand-charcoal/40 leading-snug">
+                    {src.bestFor}
+                  </p>
                 </button>
               ))}
             </div>
@@ -826,6 +834,22 @@ export default function CampaignsPage() {
               <p className="text-brand-beige text-xs mt-2">
                 Be specific about roles, locations, firm types, and any preferences. The more detail you give, the better the results.
               </p>
+
+              {showJobTitleNotice && (
+                <div className="mt-4 rounded-lg border border-brand-rose-gold/40 bg-brand-rose-gold/10 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <p className="text-brand-cream text-xs leading-relaxed flex-1">
+                    Companies House can&apos;t search by job title. For founders or CEOs, Global Prospects gives better results.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setProspectSource('global_prospects')}
+                    disabled={finding}
+                    className="btn-secondary text-xs flex-shrink-0"
+                  >
+                    Switch to Global Prospects
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center gap-4 mt-4">
                 <button
@@ -1034,17 +1058,23 @@ export default function CampaignsPage() {
                     </p>
                   </div>
 
-                  {/* LinkedIn link */}
+                  {/* LinkedIn link. Labelled by what it actually is: a verified
+                      profile, or a search fallback. */}
                   {p.linkedin_url && (
                     <a
                       href={p.linkedin_url}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="flex-shrink-0 text-[#0A66C2] hover:text-[#004182] transition-colors"
-                      title="Find on LinkedIn"
+                      className={`flex-shrink-0 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                        linkedInLinkKind(p.linkedin_url) === 'profile'
+                          ? 'text-[#0A66C2] hover:text-[#004182]'
+                          : 'text-brand-beige hover:text-brand-cream'
+                      }`}
+                      title={linkedInLinkTooltip(p.linkedin_url)}
                     >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                      <span>{linkedInLinkLabel(p.linkedin_url)}</span>
                     </a>
                   )}
 
