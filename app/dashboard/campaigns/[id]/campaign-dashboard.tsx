@@ -3,6 +3,12 @@
 import { useState } from 'react'
 import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption } from '@/types'
 import { toast } from 'sonner'
+import {
+  isLinkedInProfileUrl,
+  linkedInLinkKind,
+  linkedInLinkLabel,
+  linkedInLinkTooltip,
+} from '@/lib/linkedin'
 
 interface Props {
   campaign: Campaign
@@ -436,9 +442,9 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               )}
               {/* Contact indicators */}
               <div className="flex items-center gap-2 mt-1.5">
-                {prospect.linkedin_url && (
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded ${prospect.linkedin_url.includes('/in/') ? 'bg-[#0A66C2]/20 text-[#0A66C2]' : 'bg-brand-charcoal text-brand-beige'}`}>
-                    {prospect.linkedin_url.includes('/in/') ? 'LI' : 'LI?'}
+                {isLinkedInProfileUrl(prospect.linkedin_url) && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#0A66C2]/20 text-[#0A66C2]">
+                    LI
                   </span>
                 )}
                 {prospect.email && (
@@ -860,17 +866,24 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                     Contact Methods
                   </h4>
                   <div className="space-y-3">
-                    {/* LinkedIn */}
+                    {/* LinkedIn. A verified profile and a search fallback are
+                        labelled differently so the link never oversells itself. */}
                     {selected.linkedin_url && (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-[#0A66C2]/10 flex items-center justify-center flex-shrink-0">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                            isLinkedInProfileUrl(selected.linkedin_url) ? 'bg-[#0A66C2]/10' : 'bg-brand-charcoal-deeper'
+                          }`}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill={isLinkedInProfileUrl(selected.linkedin_url) ? '#0A66C2' : '#a18d89'}><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
                           </div>
                           <div>
                             <p className="text-brand-cream text-sm font-semibold">LinkedIn</p>
                             <p className="text-brand-beige text-xs">
-                              {selected.linkedin_url.includes('/in/') ? 'Verified profile' : 'Search link'}
+                              {linkedInLinkKind(selected.linkedin_url) === 'profile'
+                                ? 'Verified profile'
+                                : linkedInLinkKind(selected.linkedin_url) === 'search'
+                                ? 'No verified profile found'
+                                : 'Unverified link'}
                             </p>
                           </div>
                         </div>
@@ -878,9 +891,12 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                           href={selected.linkedin_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[#0A66C2] text-xs font-semibold hover:underline"
+                          title={linkedInLinkTooltip(selected.linkedin_url)}
+                          className={`text-xs font-semibold hover:underline ${
+                            isLinkedInProfileUrl(selected.linkedin_url) ? 'text-[#0A66C2]' : 'text-brand-beige'
+                          }`}
                         >
-                          {selected.linkedin_url.includes('/in/') ? 'Open Profile' : 'Search'} &rarr;
+                          {linkedInLinkLabel(selected.linkedin_url)} &rarr;
                         </a>
                       </div>
                     )}
