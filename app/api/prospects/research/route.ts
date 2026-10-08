@@ -162,6 +162,24 @@ export async function POST(req: NextRequest) {
     const apolloPhone = apolloResult?.phone || null
     const apolloHeadline = apolloResult?.headline || null
 
+    // Backfill only what the source left blank. Never overwrite verified
+    // Companies House / FCA location, company or role with Apollo's guess.
+    const finalLocation = (input.location && input.location.trim())
+      ? input.location
+      : (apolloResult?.location || null)
+    const finalCompany = (input.company && input.company.trim())
+      ? input.company
+      : (apolloResult?.company || null)
+    const apolloMatched = !!apolloResult?.linkedin_url
+
+    if (apolloMatched) {
+      console.log(`[Research] Apollo matched a LinkedIn profile for ${input.name}`)
+    } else if (apolloResult) {
+      console.log(`[Research] Apollo returned contact data but no profile URL for ${input.name}`)
+    } else {
+      console.log(`[Research] No Apollo match for ${input.name}; using LinkedIn search fallback`)
+    }
+
     // Save results
     await admin
       .from('prospects')
@@ -170,6 +188,8 @@ export async function POST(req: NextRequest) {
         email: apolloEmail,
         phone: apolloPhone,
         headline: apolloHeadline,
+        location: finalLocation,
+        company: finalCompany,
         company_number: effectiveCompanyNumber,
         accounts_category: chFinancials?.accountsCategory || null,
         accounts_last_filed: chFinancials?.lastAccountsMadeUpTo || null,
@@ -193,7 +213,7 @@ export async function POST(req: NextRequest) {
         tier: research.tier,
         linkedin_url: linkedinUrl,
         email: apolloEmail,
-        apollo_match: !!apolloResult?.linkedin_url,
+        apollo_match: apolloMatched,
         accounts_category: chFinancials?.accountsCategory || null,
       }],
       completed: 1,
