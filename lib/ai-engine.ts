@@ -110,7 +110,10 @@ AGE ESTIMATE: Infer from career length implied by seniority. Do NOT default to 5
 
 YEARS AT SENIOR LEVEL: Estimate based on role seniority and typical career progression. Vary this — not everyone has 12 years.
 
-OUTREACH from ${context.senderName} to prospect.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''} Step1: connection request max 280 chars, no pitch. Step2: welcome msg max 600 chars, pivotal question relevant to their situation. Step3: value+CTA max 800 chars, proof story+15min invite.
+OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence that EARNS a conversation. It does not chase a call. These are senior, wealthy, heavily-pitched people: a stranger asking for 15 minutes reads as a sales script and gets ignored. The sequence must feel like a credible peer reaching out, not a funnel.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''}
+Step1 (Connection Request, max 280 chars): NO pitch, NO ask, NO mention of a call or meeting. One genuine, specific reason for connecting tied to something real about them or their company. The only goal is that they accept.
+Step2 (Welcome Message, max 600 chars): thank them for connecting. Stay curious and human. Ask ONE thoughtful question relevant to their situation. NO pitch and NO call ask here either.
+Step3 (Value + Soft Door, max 800 chars): lead with something genuinely useful. You may include ONE short illustrative example of how someone in a similar position handled this, but keep it DIRECTIONAL, never fake-precise: say things like "saved a meaningful amount in tax and a lot of admin", NEVER invented exact figures like "£47k" or "saved £24k a year". Precise numbers from a near-stranger read as a script and destroy trust. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share how a couple of others approached it, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
 British English. No financial advice. No guarantees. Peer tone.`,
     messages: [{
       role: 'user',
@@ -134,7 +137,7 @@ Return this exact JSON structure (fill in ALL values uniquely for this specific 
   "outreach": {
     "step1": {"title": "Connection Request", "timing": "Day 0", "charLimit": 280, "message": "...", "chars": 0, "personalization": "..."},
     "step2": {"title": "Welcome Message", "timing": "24hrs later", "charLimit": 600, "message": "...", "chars": 0, "personalization": "..."},
-    "step3": {"title": "Value + Soft CTA", "timing": "5-7 days later", "charLimit": 800, "message": "...", "chars": 0, "personalization": "..."}
+    "step3": {"title": "Value + Soft Door", "timing": "5-7 days later", "charLimit": 800, "message": "...", "chars": 0, "personalization": "..."}
   }
 }`
     }],
