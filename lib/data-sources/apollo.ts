@@ -16,6 +16,10 @@ async function apolloFetch(path: string, body: Record<string, unknown>): Promise
   const apiKey = getApiKey()
   if (!apiKey) return null
 
+  // Per-call timeout so one slow Apollo request cannot hang a Netlify function
+  // (10s hard limit). The match chain makes up to three calls, so cap each.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 4000)
   try {
     const res = await fetch(`${APOLLO_BASE}${path}`, {
       method: 'POST',
@@ -24,6 +28,7 @@ async function apolloFetch(path: string, body: Record<string, unknown>): Promise
         'X-Api-Key': apiKey,
       },
       body: JSON.stringify({ ...body, api_key: apiKey }),
+      signal: controller.signal,
     })
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
@@ -34,6 +39,8 @@ async function apolloFetch(path: string, body: Record<string, unknown>): Promise
   } catch (err) {
     console.error(`Apollo ${path} error:`, err)
     return null
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -109,17 +116,77 @@ export async function searchPeople(params: ApolloSearchParams): Promise<{
 
 // ── Single Enrichment by Name + Company ──────
 
+const COMPANY_SUFFIXES = [
+  'limited', 'ltd', 'plc', 'llp', 'lp', 'llc', 'inc', 'incorporated',
+  'corporation', 'corp', 'company', 'co', 'group', 'holdings', 'holding',
+  'partners', 'partnership', 'associates', 'services', 'international',
+  'uk', 'gb', 'global',
+]
+
+// Companies House and FCA give legal names like "EQUITY HOUSE LONDON LTD".
+// Apollo stores the trading name ("Equity House London"), so matching on the
+// raw legal name often misses. Stripping the suffix lifts the match rate a lot.
+export function cleanCompanyName(name: string): string {
+  if (!name) return ''
+  let out = name
+    .replace(/[.,]/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const suffix of COMPANY_SUFFIXES) {
+      const re = new RegExp('\\s+' + suffix + '$', 'i')
+      if (re.test(out)) {
+        out = out.replace(re, '').trim()
+        changed = true
+      }
+    }
+  }
+  return out || name.trim()
+}
+
+// Tries a short chain of match attempts and returns the first result that
+// carries a real LinkedIn profile URL. Each attempt is one Apollo call.
+// Reveal of personal email/phone is requested so Companies House and FCA
+// prospects get the same contact data the global flow already gets.
 export async function enrichWithApollo(
   firstName: string,
   lastName: string,
   companyName: string
 ): Promise<ApolloEnrichResult | null> {
-  const data = await apolloFetch('/people/match', {
-    first_name: firstName,
-    last_name: lastName,
-    organization_name: companyName,
-  })
-  return parsePersonResult(data)
+  if (!firstName && !lastName) return null
+
+  const cleaned = cleanCompanyName(companyName)
+  const orgAttempts: (string | null)[] = []
+  if (cleaned) orgAttempts.push(cleaned)
+  if (companyName && companyName.trim() && companyName.trim() !== cleaned) {
+    orgAttempts.push(companyName.trim())
+  }
+  orgAttempts.push(null) // last resort: match on name alone
+
+  let firstParsed: ApolloEnrichResult | null = null
+
+  for (const org of orgAttempts) {
+    const payload: Record<string, unknown> = {
+      first_name: firstName,
+      last_name: lastName,
+      reveal_personal_emails: true,
+      reveal_phone_number: true,
+    }
+    if (org) payload.organization_name = org
+
+    const data = await apolloFetch('/people/match', payload)
+    const parsed = parsePersonResult(data)
+
+    if (parsed) {
+      if (!firstParsed) firstParsed = parsed
+      if (parsed.linkedin_url) return parsed
+    }
+  }
+
+  return firstParsed
 }
 
 // ── Single Enrichment by Apollo ID ───────────
