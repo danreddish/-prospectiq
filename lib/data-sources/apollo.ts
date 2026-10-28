@@ -6,6 +6,9 @@
  * Free tier: 10,000 credits/year.
  */
 
+import { normaliseLinkedInUrl } from '@/lib/linkedin'
+import { cleanPersonName } from '@/lib/names'
+
 const APOLLO_BASE = 'https://api.apollo.io/v1'
 
 function getApiKey(): string | null {
@@ -259,15 +262,20 @@ function parsePersonResult(data: Record<string, unknown> | null): ApolloEnrichRe
   const city = (person.city as string) || ''
   const country = (person.country as string) || ''
 
+  const rawName =
+    (person.name as string) || `${person.first_name || ''} ${person.last_name || ''}`.trim()
+  // Apollo sometimes files a credential as the surname, e.g. "Jevon RITTech".
+  const name = cleanPersonName(rawName) || null
+
   return {
-    linkedin_url: (person.linkedin_url as string) || null,
+    linkedin_url: normaliseLinkedInUrl(person.linkedin_url as string | undefined),
     email: (person.email as string) || null,
     phone: extractPhone(person),
     title: (person.title as string) || null,
     headline: (person.headline as string) || null,
     photo_url: (person.photo_url as string) || null,
     city,
-    name: (person.name as string) || `${person.first_name || ''} ${person.last_name || ''}`.trim() || null,
+    name,
     first_name: (person.first_name as string) || null,
     last_name: (person.last_name as string) || null,
     company: (org?.name as string) || null,

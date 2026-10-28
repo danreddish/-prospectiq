@@ -32,3 +32,35 @@ export function linkedInLinkLabel(url: string | null | undefined): string {
 export function linkedInLinkTooltip(url: string | null | undefined): string | undefined {
   return linkedInLinkKind(url) === 'search' ? LINKEDIN_SEARCH_TOOLTIP : undefined
 }
+
+/**
+ * Forces https, collapses duplicate slashes in the path and drops a trailing
+ * slash. Apollo returns some profile URLs as http, which browsers and some
+ * corporate proxies treat differently from the https original.
+ *
+ * Returns null for empty input so callers can store null rather than ''.
+ */
+export function normaliseLinkedInUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  const trimmed = url.trim()
+  if (!trimmed) return null
+
+  // http:// and protocol-relative and scheme-less values all become https://.
+  let value = trimmed.replace(/^https?:\/\//i, 'https://')
+  if (!/^https:\/\//i.test(value)) {
+    value = `https://${value.replace(/^\/+/, '')}`
+  }
+
+  const rest = value.slice('https://'.length)
+  const markerIndex = rest.search(/[?#]/)
+  const path = markerIndex === -1 ? rest : rest.slice(0, markerIndex)
+  const suffix = markerIndex === -1 ? '' : rest.slice(markerIndex)
+
+  // Trailing slashes are only trimmed when there is no query or fragment, so
+  // search URLs keep the shape LinkedIn expects.
+  let cleanedPath = path.replace(/\/{2,}/g, '/')
+  if (!suffix) cleanedPath = cleanedPath.replace(/\/+$/, '')
+  if (!cleanedPath) return null
+
+  return `https://${cleanedPath}${suffix}`
+}

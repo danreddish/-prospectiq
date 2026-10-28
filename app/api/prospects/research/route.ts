@@ -4,6 +4,7 @@ import { researchProspect, type ProspectFinancials } from '@/lib/ai-engine'
 import { enrichWithApollo } from '@/lib/data-sources/apollo'
 import { getCompanyFinancials, wealthCeilingFromAccounts, formatAccountsCategory } from '@/lib/data-sources/companies-house'
 import { isAdmin, accessMessage, type AccessReason } from '@/lib/access'
+import { normaliseLinkedInUrl } from '@/lib/linkedin'
 import { z } from 'zod'
 
 const ResearchSchema = z.object({
@@ -208,8 +209,11 @@ export async function POST(req: NextRequest) {
     const { apolloResult, chFinancials, research } = await Promise.race([pending, deadline])
       .finally(() => clearTimeout(deadlineTimer))
 
-    // Use Apollo LinkedIn URL if found, otherwise use search URL
-    const linkedinUrl = apolloResult?.linkedin_url || input.linkedin_url || linkedinSearchUrl
+    // Use Apollo LinkedIn URL if found, otherwise use search URL.
+    // Always stored as https so older http rows do not reappear.
+    const linkedinUrl = normaliseLinkedInUrl(
+      apolloResult?.linkedin_url || input.linkedin_url || linkedinSearchUrl
+    )
     const apolloEmail = apolloResult?.email || null
     const apolloPhone = apolloResult?.phone || null
     const apolloHeadline = apolloResult?.headline || null
