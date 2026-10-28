@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { createCheckoutSession, getOrCreateCustomer } from '@/lib/stripe'
 import { z } from 'zod'
 
@@ -58,12 +58,14 @@ export async function POST(req: NextRequest) {
     if (!customerId) {
       const customer = await getOrCreateCustomer({
         userId: user.id,
-        email: profile?.email || user.email!,
+        email: user.email || profile?.email || '',
         name: profile?.full_name || undefined,
       })
       customerId = customer.id
 
-      await supabase
+      // v75.7: billing columns are locked to the server, so save the
+      // customer id with the service role rather than the user's login.
+      await createAdminClient()
         .from('profiles')
         .update({ stripe_customer_id: customerId })
         .eq('id', user.id)

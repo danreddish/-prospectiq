@@ -3,6 +3,7 @@ import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { researchProspect, type ProspectFinancials } from '@/lib/ai-engine'
 import { enrichWithApollo } from '@/lib/data-sources/apollo'
 import { getCompanyFinancials, wealthCeilingFromAccounts, formatAccountsCategory } from '@/lib/data-sources/companies-house'
+import { isAdmin, accessMessage, type AccessReason } from '@/lib/access'
 import { z } from 'zod'
 
 const ResearchSchema = z.object({
@@ -19,7 +20,14 @@ const ResearchSchema = z.object({
   ).min(1).max(1),
 })
 
+// v75.7: Netlify stops functions at 10 seconds. Give up a little before
+// that, so a slow prospect is marked failed and its credit refunded,
+// rather than the function being killed with the credit spent and the
+// prospect stuck on 'processing'.
+const RESEARCH_DEADLINE_MS = 9000
+
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now()
   const supabase = createClient()
   const admin = createAdminClient()
 
@@ -50,6 +58,33 @@ export async function POST(req: NextRequest) {
 
   const campaign = campaignRes.data
   const profile = profileRes.data
+
+  // v75.7: reserve one research from the user's plan before spending any
+  // Apollo or Claude credits. Admins are never blocked or counted.
+  let creditReserved = false
+  if (!isAdmin(user.email)) {
+    const { data: credit, error: creditError } = await admin.rpc('consume_research_credit', { p_user_id: user.id })
+    if (creditError || !credit) {
+      console.error('[Research] Plan check failed:', creditError?.message)
+      return NextResponse.json(
+        { error: 'We could not check your plan just now. Please try again in a moment.', code: 'plan_check_failed' },
+        { status: 503 }
+      )
+    }
+    const c = credit as { ok: boolean; reason?: AccessReason; limit?: number; resets_at?: string | null }
+    if (!c.ok) {
+      const reason = c.reason || 'no_plan'
+      const message = accessMessage(reason, { limit: c.limit, resetsAt: c.resets_at })
+      return NextResponse.json({ error: message, code: reason }, { status: 402 })
+    }
+    creditReserved = true
+  }
+  const refundCredit = async () => {
+    if (!creditReserved) return
+    creditReserved = false
+    const { error } = await admin.rpc('refund_research_credit', { p_user_id: user.id })
+    if (error) console.error('[Research] Refund failed:', error.message)
+  }
 
   // Merge service profile: campaign overrides account defaults
   const accountSP = (profile?.service_profile || {}) as Record<string, string | null>
@@ -102,6 +137,7 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (insertError || !inserted) {
+      await refundCredit()
       return NextResponse.json({ error: 'Failed to create prospect' }, { status: 500 })
     }
     prospectId = inserted.id
@@ -119,42 +155,58 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Research] Starting for: ${input.name} at ${input.company || 'unknown'}${effectiveCompanyNumber ? ` (CH ${effectiveCompanyNumber})` : ''}`)
 
-    // Pull Apollo enrichment and CH financials in parallel BEFORE research,
-    // so research can use the financial data to apply hard scoring caps.
-    const [apolloResult, chFinancials] = await Promise.all([
-      enrichWithApollo(firstName, lastName, input.company || '').catch((err) => {
-        console.error('[Research] Apollo enrichment failed:', err)
-        return null
-      }),
-      effectiveCompanyNumber
-        ? getCompanyFinancials(effectiveCompanyNumber).catch((err) => {
-            console.error('[Research] CH financials failed:', err)
-            return null
-          })
-        : Promise.resolve(null),
-    ])
+    // v75.7: everything slow runs inside work(), raced against the deadline.
+    const work = async () => {
+      // Pull Apollo enrichment and CH financials in parallel BEFORE research,
+      // so research can use the financial data to apply hard scoring caps.
+      const [apolloResult, chFinancials] = await Promise.all([
+        enrichWithApollo(firstName, lastName, input.company || '').catch((err) => {
+          console.error('[Research] Apollo enrichment failed:', err)
+          return null
+        }),
+        effectiveCompanyNumber
+          ? getCompanyFinancials(effectiveCompanyNumber).catch((err) => {
+              console.error('[Research] CH financials failed:', err)
+              return null
+            })
+          : Promise.resolve(null),
+      ])
 
-    // Build the financials package for the AI engine
-    let financialsForAi: ProspectFinancials | null = null
-    if (chFinancials) {
-      financialsForAi = {
-        accountsCategory: chFinancials.accountsCategory,
-        hasFiledAccounts: chFinancials.hasFiledAccounts,
-        companyStatus: chFinancials.companyStatus,
-        dateOfCreation: chFinancials.dateOfCreation,
-        wealthCeiling: wealthCeilingFromAccounts(chFinancials.accountsCategory, chFinancials.companyStatus),
-        formattedCategory: formatAccountsCategory(chFinancials.accountsCategory),
+      // Build the financials package for the AI engine
+      let financialsForAi: ProspectFinancials | null = null
+      if (chFinancials) {
+        financialsForAi = {
+          accountsCategory: chFinancials.accountsCategory,
+          hasFiledAccounts: chFinancials.hasFiledAccounts,
+          companyStatus: chFinancials.companyStatus,
+          dateOfCreation: chFinancials.dateOfCreation,
+          wealthCeiling: wealthCeilingFromAccounts(chFinancials.accountsCategory, chFinancials.companyStatus),
+          formattedCategory: formatAccountsCategory(chFinancials.accountsCategory),
+        }
+        console.log(`[Research] CH financials: ${financialsForAi.formattedCategory}, ceiling: ${financialsForAi.wealthCeiling ?? 'none'}`)
       }
-      console.log(`[Research] CH financials: ${financialsForAi.formattedCategory}, ceiling: ${financialsForAi.wealthCeiling ?? 'none'}`)
+
+      const research = await researchProspect(input, {
+        niche: campaign.niche || profile?.niche || 'Wealth management',
+        senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
+        serviceProfile,
+        customInstructions: campaign.custom_instructions || null,
+        financials: financialsForAi,
+      })
+      return { apolloResult, chFinancials, research }
     }
 
-    const research = await researchProspect(input, {
-      niche: campaign.niche || profile?.niche || 'Wealth management',
-      senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
-      serviceProfile,
-      customInstructions: campaign.custom_instructions || null,
-      financials: financialsForAi,
+    const pending = work()
+    pending.catch(() => {}) // if the deadline wins, a later failure is already handled
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      deadlineTimer = setTimeout(
+        () => reject(new Error('This prospect took too long to research. Please try again.')),
+        Math.max(RESEARCH_DEADLINE_MS - (Date.now() - startedAt), 0)
+      )
     })
+    const { apolloResult, chFinancials, research } = await Promise.race([pending, deadline])
+      .finally(() => clearTimeout(deadlineTimer))
 
     // Use Apollo LinkedIn URL if found, otherwise use search URL
     const linkedinUrl = apolloResult?.linkedin_url || input.linkedin_url || linkedinSearchUrl
@@ -229,6 +281,9 @@ export async function POST(req: NextRequest) {
       .from('prospects')
       .update({ status: 'failed', error_message: message })
       .eq('id', prospectId)
+
+    // v75.7: a failed research doesn't use up the user's allowance.
+    await refundCredit()
 
     return NextResponse.json({
       results: [{ id: prospectId, status: 'failed', error: message }],

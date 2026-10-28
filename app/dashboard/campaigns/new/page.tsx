@@ -233,6 +233,7 @@ export default function CampaignsPage() {
       const targetRoles: string[] = searchParams.targetRoles || searchParams.roleKeywords || ['director']
 
       // STEP 2: For each search term, find real people
+      let planNote = '' // v75.7: set when the plan or find budget stops the search
       const allProspects: FoundProspect[] = []
       const seenNames: Record<string, boolean> = {}
       let termsProcessed = 0
@@ -261,6 +262,10 @@ export default function CampaignsPage() {
               }),
             })
             const indData = await indRes.json()
+            if (indRes.status === 402) {
+              planNote = indData.error || 'Your plan does not allow more searches right now.'
+              break
+            }
             log(`Page ${page}: status=${indRes.status}, individuals=${indData.individuals?.length || 0}, total=${indData.totalInDatabase || '?'}, fallback=${indData.usedFallback || false}${indData.enrichmentsFailed ? ' ⚠️ ENRICHMENT FAILED (Apollo credits exhausted?)' : ''}`)
             if (indData.error) log(`  Error: ${indData.error}`)
             const newProspects = indData.individuals || []
@@ -301,6 +306,10 @@ export default function CampaignsPage() {
           })
 
           const indData = await indRes.json()
+          if (indRes.status === 402) {
+            planNote = indData.error || 'Your plan does not allow more searches right now.'
+            break
+          }
           for (const p of indData.individuals || []) {
             const key = `${p.name}|${p.company}`.toLowerCase()
             if (!seenNames[key]) {
@@ -358,7 +367,11 @@ export default function CampaignsPage() {
 
       setStep('review')
 
-      if (allProspects.length > 0) {
+      if (planNote && allProspects.length === 0) {
+        toast.error(planNote, { duration: 10000 })
+      } else if (planNote) {
+        toast.success(`Found ${allProspects.length} prospects. ${planNote}`, { duration: 10000 })
+      } else if (allProspects.length > 0) {
         toast.success(
           isGlobal
             ? `Found ${allProspects.length} prospects from Apollo's global database`
@@ -390,6 +403,7 @@ export default function CampaignsPage() {
     let completed = 0
     let failed = 0
     let lastError = ''
+    let planStop = '' // v75.7: set when the plan blocks further research
     setResearchProgress({ completed: 0, total })
 
     // Process in batches of 5 (Netlify function timeout limit)
@@ -414,6 +428,12 @@ export default function CampaignsPage() {
         })
 
         const data = await res.json()
+        // v75.7: out of researches or no active plan. Stop here rather than
+        // failing every remaining prospect.
+        if (res.status === 402) {
+          planStop = data.error || 'Your plan does not allow more research right now.'
+          break
+        }
         if (!res.ok) throw new Error(data.error || 'Research failed')
 
         completed += data.completed || 0
@@ -428,7 +448,16 @@ export default function CampaignsPage() {
       }
     }
 
-    if (completed > 0) {
+    if (planStop) {
+      // Found prospects are already saved as pending, so nothing is lost.
+      if (completed > 0) {
+        toast.success(`Researched ${completed} prospects. ${planStop}`, { duration: 10000 })
+        router.push(`/dashboard/campaigns/${campaignId}`)
+      } else {
+        toast.error(planStop, { duration: 10000 })
+        setStep('review')
+      }
+    } else if (completed > 0) {
       toast.success(
         `Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}`
       )
@@ -450,6 +479,7 @@ export default function CampaignsPage() {
     const total = valid.length
     let completed = 0
     let failed = 0
+    let planStop = '' // v75.7
     setResearchProgress({ completed: 0, total })
 
     const BATCH_SIZE = 1
@@ -466,6 +496,10 @@ export default function CampaignsPage() {
         })
 
         const data = await res.json()
+        if (res.status === 402) {
+          planStop = data.error || 'Your plan does not allow more research right now.'
+          break
+        }
         if (!res.ok) throw new Error(data.error || 'Research failed')
 
         completed += data.completed || 0
@@ -477,7 +511,15 @@ export default function CampaignsPage() {
       }
     }
 
-    if (completed > 0) {
+    if (planStop) {
+      if (completed > 0) {
+        toast.success(`Researched ${completed} prospects. ${planStop}`, { duration: 10000 })
+        router.push(`/dashboard/campaigns/${campaignId}`)
+      } else {
+        toast.error(planStop, { duration: 10000 })
+        setStep('add-manual')
+      }
+    } else if (completed > 0) {
       toast.success(`Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}`)
       router.push(`/dashboard/campaigns/${campaignId}`)
     } else {

@@ -1,3 +1,4 @@
+import { requireAccess, reserveFindUnits } from '@/lib/access-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAnthropic } from '@/lib/ai-engine'
@@ -92,6 +93,14 @@ export async function POST(req: NextRequest) {
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // v75.7: finding spends Claude and Apollo credits, so it needs an active
+  // plan with at least one research left this cycle.
+  const blocked = await requireAccess(supabase, user, { needsResearchLeft: true })
+  if (blocked) return blocked
+  // One unit of the monthly find budget per AI search.
+  const findBudget = await reserveFindUnits(user, 1)
+  if (findBudget.response) return findBudget.response
 
   const body = await req.json()
   const parsed = FindSchema.safeParse(body)

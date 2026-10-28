@@ -60,6 +60,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     const total = toResearch.length
     let completed = 0
     let failed = 0
+    let planStop = '' // v75.7
     setResearchProgress({ completed: 0, total })
 
     for (const prospect of toResearch) {
@@ -79,6 +80,10 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
           }),
         })
         const data = await res.json()
+        if (res.status === 402) {
+          planStop = data.error || 'Your plan does not allow more research right now.'
+          break
+        }
         if (!res.ok) throw new Error(data.error || 'Research failed')
         completed += data.completed || 0
         failed += data.failed || 0
@@ -89,7 +94,14 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     }
 
     setResearching(false)
-    if (completed > 0) {
+    if (planStop) {
+      if (completed > 0) {
+        toast.success(`Researched ${completed} prospects. ${planStop}`, { duration: 10000 })
+        window.location.reload()
+      } else {
+        toast.error(planStop, { duration: 10000 })
+      }
+    } else if (completed > 0) {
       toast.success(`Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}`)
       // Reload the page to show updated data
       window.location.reload()

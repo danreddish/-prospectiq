@@ -1,9 +1,14 @@
+import { requireAdmin } from '@/lib/access-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { researchProspect } from '@/lib/ai-engine'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  // v75.7: admin only. These spend Apollo, FCA and Claude credits.
+  const denied = await requireAdmin()
+  if (denied) return denied
+
   const startTime = Date.now()
 
   try {
