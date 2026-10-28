@@ -1,3 +1,4 @@
+import { requireAccess } from '@/lib/access-guard'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { enrichFullProfileByLinkedInUrl } from '@/lib/data-sources/apollo'
@@ -38,6 +39,10 @@ export async function POST(request: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
+
+    // v75.7: the import uses Apollo and Claude, so it needs an active plan.
+    const blocked = await requireAccess(supabase, user)
+    if (blocked) return blocked
 
     // Step 1: Apollo enrichment from LinkedIn URL
     let apolloContext = ''

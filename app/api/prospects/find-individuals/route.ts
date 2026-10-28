@@ -1,3 +1,4 @@
+import { requireAccess, reserveFindUnits, refundFindUnits } from '@/lib/access-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -34,6 +35,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // v75.7: Global search spends Apollo enrichment credits on every page.
+  const blocked = await requireAccess(supabase, user, { needsResearchLeft: true })
+  if (blocked) return blocked
+
   const body = await req.json()
   const parsed = Schema.safeParse(body)
   if (!parsed.success) {
@@ -44,7 +49,21 @@ export async function POST(req: NextRequest) {
 
   try {
     if (source === 'global_prospects') {
-      return await findApolloProspects(apollo_params || {}, max_individuals, search_term)
+      // v75.7: each Apollo-enriched contact (name, email, phone, LinkedIn)
+      // uses one unit of the monthly find budget. Reserve up front, then
+      // give back whatever Apollo didn't return.
+      const wanted = Math.min(max_individuals, 5)
+      const budget = await reserveFindUnits(user, wanted)
+      if (budget.response) return budget.response
+      let returned = 0
+      try {
+        const res = await findApolloProspects(apollo_params || {}, budget.granted, search_term)
+        const body = await res.clone().json().catch(() => ({}))
+        returned = Array.isArray(body?.individuals) ? body.individuals.length : 0
+        return res
+      } finally {
+        await refundFindUnits(user, budget.granted - returned)
+      }
     } else if (source === 'financial_professionals') {
       return await findFCAIndividuals(search_term, target_locations, max_individuals)
     } else {

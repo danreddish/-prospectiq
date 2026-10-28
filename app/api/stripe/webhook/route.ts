@@ -29,13 +29,13 @@ export async function POST(req: NextRequest) {
         const userId = session.metadata?.userId
         if (!userId) break
 
-        // Link Stripe customer to user profile
+        // Link Stripe customer to user profile. v75.7: plan and status come
+        // from the subscription events, so this no longer marks the account
+        // as trialing (there is no Stripe trial any more).
         await supabase
           .from('profiles')
           .update({
             stripe_customer_id: session.customer as string,
-            plan_status: 'trialing',
-            trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
             updated_at: new Date().toISOString(),
           })
           .eq('id', userId)
@@ -49,24 +49,40 @@ export async function POST(req: NextRequest) {
         const priceId = subscription.items.data[0]?.price.id
         const tier = getTierFromPriceId(priceId)
 
+        // v75.7: plan status now decides access, so unknown values fail
+        // closed. 'incomplete' means the first payment hasn't gone through.
         const statusMap: Record<string, string> = {
           active: 'active',
           trialing: 'trialing',
           past_due: 'past_due',
           canceled: 'canceled',
           unpaid: 'unpaid',
+          incomplete: 'unpaid',
+          incomplete_expired: 'canceled',
+          paused: 'canceled',
+        }
+        const planStatus = statusMap[subscription.status]
+        if (!planStatus) console.error(`[Stripe] Unknown subscription status "${subscription.status}" for ${customerId}; blocking until resolved`)
+
+        const update: Record<string, unknown> = {
+          plan_status: planStatus || 'unpaid',
+          trial_ends_at: subscription.trial_end
+            ? new Date(subscription.trial_end * 1000).toISOString()
+            : null,
+          updated_at: new Date().toISOString(),
+        }
+        // v75.7: an unrecognised price id maps to 'free', which would now
+        // block a paying customer (for example if a price env var is missing
+        // after the switch to live mode). Leave the tier alone and log it.
+        if (tier === 'free') {
+          console.error(`[Stripe] Unrecognised price "${priceId}" for ${customerId}; plan tier left unchanged. Check the STRIPE_PRICE_* env vars.`)
+        } else {
+          update.plan_tier = tier
         }
 
         await supabase
           .from('profiles')
-          .update({
-            plan_tier: tier,
-            plan_status: statusMap[subscription.status] || 'active',
-            trial_ends_at: subscription.trial_end
-              ? new Date(subscription.trial_end * 1000).toISOString()
-              : null,
-            updated_at: new Date().toISOString(),
-          })
+          .update(update)
           .eq('stripe_customer_id', customerId)
         break
       }

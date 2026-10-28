@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { PLAN_LIMITS, PlanTier } from '@/types'
+import { isAdmin, researchAccess, effectiveUsage, accessMessage } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +25,15 @@ export default async function DashboardLayout({
   if (!profile) redirect('/auth/login')
 
   const limits = PLAN_LIMITS[(profile.plan_tier as PlanTier)] || PLAN_LIMITS.free
-  const usagePercent = Math.min(100, Math.round((profile.prospects_used_this_cycle / limits.prospects_per_cycle) * 100))
+  // v75.7: a cycle that has passed counts as reset, matching the database.
+  const used = effectiveUsage(profile)
+  const usagePercent = Math.min(100, Math.round((used / Math.max(limits.prospects_per_cycle, 1)) * 100))
+  const admin = isAdmin(user.email)
+  // v75.7: explain why research is blocked, before the user hits an error.
+  const blockedReason = admin ? 'ok' : researchAccess(profile)
+  const blockedMessage = blockedReason === 'ok'
+    ? null
+    : accessMessage(blockedReason, { limit: limits.prospects_per_cycle, resetsAt: profile.cycle_reset_at })
 
   return (
     <div className="flex h-screen">
@@ -43,7 +52,7 @@ export default async function DashboardLayout({
           <NavLink href="/dashboard" label="Dashboard" />
           <NavLink href="/dashboard/campaigns" label="Campaigns" />
           <NavLink href="/dashboard/settings" label="Settings" />
-          {(user.email === 'dan.reddish@gmail.com' || user.email === 'dan@aiwealthpartners.co.uk') && (
+          {admin && (
             <NavLink href="/dashboard/admin" label="Admin" />
           )}
         </nav>
@@ -53,7 +62,7 @@ export default async function DashboardLayout({
           <div className="flex justify-between text-xs mb-2">
             <span className="text-brand-beige">Prospects used</span>
             <span className="text-brand-cream font-semibold">
-              {profile.prospects_used_this_cycle}/{limits.prospects_per_cycle}
+              {used}/{limits.prospects_per_cycle}
             </span>
           </div>
           <div className="h-1.5 bg-brand-charcoal rounded-full overflow-hidden">
@@ -87,6 +96,14 @@ export default async function DashboardLayout({
       {/* Main content */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-8">
+          {blockedMessage && (
+            <div className="bg-brand-rose-gold/10 border border-brand-rose-gold/30 rounded-lg p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+              <p className="text-brand-cream text-sm">{blockedMessage}</p>
+              <Link href="/dashboard/settings" className="btn-primary text-sm whitespace-nowrap text-center">
+                Choose a plan
+              </Link>
+            </div>
+          )}
           {children}
         </div>
       </main>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { z } from 'zod'
 
-const ADMIN_EMAILS = ['dan.reddish@gmail.com', 'dan@aiwealthpartners.co.uk']
+import { isAdmin } from '@/lib/access'
 
 const Schema = z.object({
   user_id: z.string().uuid(),
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const admin = createAdminClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user || !ADMIN_EMAILS.includes(user.email || '')) {
+  if (!user || !isAdmin(user.email)) {
     return NextResponse.json({ error: 'Not authorised' }, { status: 403 })
   }
 
@@ -35,6 +35,11 @@ export async function POST(req: NextRequest) {
     updates.plan_status = 'active'
     updates.prospects_used_this_cycle = 0
     updates.cycle_reset_at = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+    // v75.7: trials are only usable with a future end date, so putting
+    // someone on 'trial' gives them a fresh 7 days.
+    if (plan_tier === 'trial') {
+      updates.trial_ends_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    }
   }
 
   if (reset_usage) {

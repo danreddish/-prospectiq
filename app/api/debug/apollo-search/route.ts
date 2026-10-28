@@ -1,9 +1,14 @@
+import { requireAdmin } from '@/lib/access-guard'
 import { NextResponse } from 'next/server'
 import { searchPeople } from '@/lib/data-sources/apollo'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  // v75.7: admin only. These spend Apollo, FCA and Claude credits.
+  const denied = await requireAdmin()
+  if (denied) return denied
+
   const results: Record<string, unknown> = {}
 
   // Test 1: Minimal search - just q_keywords + seniorities (should return thousands)

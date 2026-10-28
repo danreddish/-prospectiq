@@ -1,8 +1,13 @@
+import { requireAdmin } from '@/lib/access-guard'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  // v75.7: admin only. These spend Apollo, FCA and Claude credits.
+  const denied = await requireAdmin()
+  if (denied) return denied
+
   const apiKey = process.env.FCA_REGISTER_API_KEY
   const email = process.env.FCA_REGISTER_EMAIL
 

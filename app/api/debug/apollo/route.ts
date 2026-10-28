@@ -1,9 +1,14 @@
+import { requireAdmin } from '@/lib/access-guard'
 import { NextResponse } from 'next/server'
 import { enrichWithApollo, searchPeople, enrichById } from '@/lib/data-sources/apollo'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  // v75.7: admin only. These spend Apollo, FCA and Claude credits.
+  const denied = await requireAdmin()
+  if (denied) return denied
+
   const hasKey = !!process.env.APOLLO_API_KEY
   const keyPrefix = process.env.APOLLO_API_KEY?.slice(0, 8) || 'NOT SET'
 

@@ -4,14 +4,13 @@ import AdminDashboard from './admin-dashboard'
 
 export const dynamic = 'force-dynamic'
 
-// Only these emails can access the admin page
-const ADMIN_EMAILS = ['dan.reddish@gmail.com', 'dan@aiwealthpartners.co.uk']
+import { isAdmin } from '@/lib/access'
 
 export default async function AdminPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  if (!user || !ADMIN_EMAILS.includes(user.email || '')) {
+  if (!user || !isAdmin(user.email)) {
     redirect('/dashboard')
   }
 

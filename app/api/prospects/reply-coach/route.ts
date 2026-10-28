@@ -1,3 +1,4 @@
+import { requireAccess } from '@/lib/access-guard'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateReplyCoach } from '@/lib/ai-engine'
@@ -16,6 +17,10 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   }
+
+  // v75.7: each reply suggestion is a Claude call, so it needs an active plan.
+  const blocked = await requireAccess(supabase, user)
+  if (blocked) return blocked
 
   const body = await req.json()
   const parsed = ReplyCoachSchema.safeParse(body)

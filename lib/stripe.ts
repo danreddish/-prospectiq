@@ -57,8 +57,10 @@ export async function createCheckoutSession({
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: successUrl,
     cancel_url: cancelUrl,
+    // v75.7: no Stripe trial. The 7-day in-app trial (no card needed) is the
+    // free trial. A Stripe trial on every checkout let people cancel and
+    // resubscribe for another free week, again and again.
     subscription_data: {
-      trial_period_days: 7,
       metadata: { userId },
     },
     metadata: { userId },
