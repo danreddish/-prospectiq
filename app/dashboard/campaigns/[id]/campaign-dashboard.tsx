@@ -8,7 +8,9 @@ import {
   linkedInLinkKind,
   linkedInLinkLabel,
   linkedInLinkTooltip,
+  normaliseLinkedInUrl,
 } from '@/lib/linkedin'
+import { cleanPersonName, hasSurname, SURNAME_MISSING_NOTE } from '@/lib/names'
 
 interface Props {
   campaign: Campaign
@@ -36,6 +38,13 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const filtered = tierFilter === 'all'
     ? prospects
     : prospects.filter((p) => p.tier === tierFilter)
+
+  // Apollo sometimes files a credential as the surname, so every display of a
+  // prospect's name goes through cleanPersonName.
+  const selectedName = selected ? cleanPersonName(selected.name) : ''
+  const selectedProfileUrl = selected && isLinkedInProfileUrl(selected.linkedin_url)
+    ? normaliseLinkedInUrl(selected.linkedin_url)
+    : null
 
   const tierCounts = {
     A: prospects.filter((p) => p.tier === 'A').length,
@@ -435,7 +444,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-brand-cream text-sm font-semibold truncate">{prospect.name}</p>
+                  <p className="text-brand-cream text-sm font-semibold truncate">{cleanPersonName(prospect.name)}</p>
                   <p className="text-brand-beige text-xs truncate mt-0.5">
                     {prospect.role}{prospect.company ? `, ${prospect.company}` : ''}
                   </p>
@@ -455,9 +464,16 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               {/* Contact indicators */}
               <div className="flex items-center gap-2 mt-1.5">
                 {isLinkedInProfileUrl(prospect.linkedin_url) && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#0A66C2]/20 text-[#0A66C2]">
+                  <a
+                    href={normaliseLinkedInUrl(prospect.linkedin_url) || undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title="Open LinkedIn profile"
+                    className="text-[9px] px-1.5 py-0.5 rounded bg-[#0A66C2]/20 text-[#0A66C2] hover:bg-[#0A66C2]/30 hover:underline transition-colors"
+                  >
                     LI
-                  </span>
+                  </a>
                 )}
                 {prospect.email && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-rose-gold/20 text-brand-rose-gold">
@@ -562,10 +578,26 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
           <div className="mb-6">
             <div className="flex items-start justify-between">
               <div>
-                <h1 className="text-brand-cream text-2xl font-display">{selected.name}</h1>
+                {selectedProfileUrl ? (
+                  <a
+                    href={selectedProfileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open LinkedIn profile"
+                    className="group inline-flex items-center gap-2 text-brand-cream text-2xl font-display hover:text-brand-rose-gold transition-colors"
+                  >
+                    <span className="group-hover:underline">{selectedName}</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#0A66C2" className="flex-shrink-0" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                  </a>
+                ) : (
+                  <h1 className="text-brand-cream text-2xl font-display">{selectedName}</h1>
+                )}
                 <p className="text-brand-beige text-sm mt-1">
                   {selected.role}{selected.company ? ` at ${selected.company}` : ''}
                 </p>
+                {!hasSurname(selectedName) && (
+                  <p className="text-brand-beige/70 text-xs mt-1">{SURNAME_MISSING_NOTE}</p>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-brand-cream text-lg font-display">
@@ -683,7 +715,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   LINK Method&trade; Outreach Sequence
                 </h3>
                 <p className="text-brand-beige text-sm mb-6">
-                  Personalised 3-step sequence for {selected.name}. Copy each message and adjust as needed.
+                  Personalised 3-step sequence for {selectedName}. Copy each message and adjust as needed.
                 </p>
 
                 {[selected.outreach?.step1, selected.outreach?.step2, selected.outreach?.step3]
@@ -706,7 +738,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   Reply Coach
                 </h3>
                 <p className="text-brand-beige text-sm mb-6">
-                  Paste {selected.name}&apos;s reply below. The AI will generate suggested responses using everything it knows about this prospect.
+                  Paste {selectedName}&apos;s reply below. The AI will generate suggested responses using everything it knows about this prospect.
                 </p>
 
                 {/* Conversation history */}
@@ -728,7 +760,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                           <p className={`text-[10px] font-bold uppercase tracking-wide mb-1 ${
                             turn.from === 'user' ? 'text-brand-rose-gold' : 'text-green-400'
                           }`}>
-                            {turn.from === 'user' ? 'You' : selected.name}
+                            {turn.from === 'user' ? 'You' : selectedName}
                           </p>
                           <p className="text-brand-cream text-sm leading-relaxed">{turn.message}</p>
                           <p className="text-brand-charcoal text-[10px] mt-1">
@@ -857,7 +889,7 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                     </div>
                     <h4 className="text-brand-cream text-sm font-semibold mb-2">Ready when they reply</h4>
                     <p className="text-brand-beige text-xs max-w-md mx-auto">
-                      Send your LINK Method outreach first. When {selected.name} responds, paste their reply here. 
+                      Send your LINK Method outreach first. When {selectedName} responds, paste their reply here. 
                       The AI uses their research profile, wealth signals, and your service offering to craft the perfect response.
                     </p>
                   </div>
@@ -900,7 +932,7 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                           </div>
                         </div>
                         <a
-                          href={selected.linkedin_url}
+                          href={normaliseLinkedInUrl(selected.linkedin_url) || undefined}
                           target="_blank"
                           rel="noopener noreferrer"
                           title={linkedInLinkTooltip(selected.linkedin_url)}

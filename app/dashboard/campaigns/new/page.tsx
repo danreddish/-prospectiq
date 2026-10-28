@@ -5,7 +5,14 @@ import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CAMPAIGN_SOURCES, mentionsJobTitle } from '@/lib/campaign-sources'
-import { linkedInLinkKind, linkedInLinkLabel, linkedInLinkTooltip } from '@/lib/linkedin'
+import {
+  isLinkedInProfileUrl,
+  linkedInLinkKind,
+  linkedInLinkLabel,
+  linkedInLinkTooltip,
+  normaliseLinkedInUrl,
+} from '@/lib/linkedin'
+import { cleanPersonName, hasSurname, SURNAME_MISSING_NOTE } from '@/lib/names'
 import type { CampaignSource } from '@/types'
 
 interface FoundProspect {
@@ -351,7 +358,7 @@ export default function CampaignsPage() {
               role: p.role || null,
               company: p.company || null,
               location: p.location || null,
-              linkedin_url: p.linkedin_url || null,
+              linkedin_url: normaliseLinkedInUrl(p.linkedin_url),
               email: p.email || null,
               phone: p.phone || null,
               headline: p.headline || null,
@@ -1072,7 +1079,20 @@ export default function CampaignsPage() {
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-brand-cream text-sm font-semibold truncate">{p.name}</p>
+                      {isLinkedInProfileUrl(p.linkedin_url) ? (
+                        <a
+                          href={normaliseLinkedInUrl(p.linkedin_url) || undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open LinkedIn profile"
+                          className="text-brand-cream text-sm font-semibold truncate hover:text-brand-rose-gold hover:underline transition-colors"
+                        >
+                          {cleanPersonName(p.name)}
+                        </a>
+                      ) : (
+                        <p className="text-brand-cream text-sm font-semibold truncate">{cleanPersonName(p.name)}</p>
+                      )}
                       {p.companyNumber && (
                         <span className="text-[10px] bg-blue-900/40 text-blue-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">
                           CH Verified
@@ -1098,13 +1118,16 @@ export default function CampaignsPage() {
                       {p.role}{p.company ? ` at ${p.company}` : ''}{p.location ? ` — ${p.location}` : ''}
                       {p.occupation ? ` (${p.occupation})` : ''}
                     </p>
+                    {!hasSurname(cleanPersonName(p.name)) && (
+                      <p className="text-brand-beige/70 text-[10px] mt-0.5">{SURNAME_MISSING_NOTE}</p>
+                    )}
                   </div>
 
                   {/* LinkedIn link. Labelled by what it actually is: a verified
                       profile, or a search fallback. */}
                   {p.linkedin_url && (
                     <a
-                      href={p.linkedin_url}
+                      href={normaliseLinkedInUrl(p.linkedin_url) || undefined}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
