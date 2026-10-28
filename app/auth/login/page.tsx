@@ -14,6 +14,13 @@ const LINK_ERRORS: Record<string, string> = {
     'We could not complete that sign-in link. If you have just confirmed your email, sign in below.',
 }
 
+// v75.6: only follow same-site relative paths after sign-in, so a crafted
+// ?redirect= link cannot send someone to another site.
+function safeRedirect(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/dashboard'
+  return raw
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -23,8 +30,10 @@ export default function LoginPage() {
   const [resent, setResent] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const redirect = searchParams.get('redirect') || '/dashboard'
-  const linkError = LINK_ERRORS[searchParams.get('error') || '']
+  const redirect = safeRedirect(searchParams.get('redirect'))
+  const errorKey = searchParams.get('error') || ''
+  // hasOwnProperty, so ?error=__proto__ cannot pull an object out of LINK_ERRORS
+  const linkError = Object.prototype.hasOwnProperty.call(LINK_ERRORS, errorKey) ? LINK_ERRORS[errorKey] : null
 
   const supabase = createClient()
 

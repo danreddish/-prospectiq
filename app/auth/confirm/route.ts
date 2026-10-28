@@ -38,6 +38,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Expired, already used, or malformed link. The login page explains what to do.
+  // Expired, already used, or malformed link. A failed reset link goes back to
+  // "forgot password" to request a new one. Anything else goes to the login
+  // page, which explains what to do.
+  if (type === 'recovery') {
+    return NextResponse.redirect(`${origin}/auth/forgot-password`)
+  }
   return NextResponse.redirect(`${origin}/auth/login?error=link_expired`)
 }
