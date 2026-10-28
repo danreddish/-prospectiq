@@ -62,10 +62,12 @@ function getDerivedStatus(user: UserRow): {
     if (trialEnd) {
       const daysLeft = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24))
       if (daysLeft <= 0) {
+        // v75.6: new signups now get a real trial end date, so trials do end.
+        const daysAgo = Math.floor((now - trialEnd) / (1000 * 60 * 60 * 24))
         return {
           key: 'trialing',
-          label: 'TRIAL ENDING',
-          detail: 'Trial expired today',
+          label: 'TRIAL ENDED',
+          detail: daysAgo < 1 ? 'Ended today' : `Ended ${daysAgo}d ago`,
           classes: 'bg-yellow-900/40 text-yellow-400 border-yellow-900',
         }
       }

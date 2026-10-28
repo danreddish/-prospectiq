@@ -26,19 +26,22 @@ create table public.profiles (
   updated_at timestamptz default now()
 );
 
--- Auto-create profile on signup
+-- Auto-create profile on signup. New accounts start on the 7-day trial (v75.6).
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id, email, full_name)
+  insert into public.profiles (id, email, full_name, plan_tier, plan_status, trial_ends_at)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
+    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
+    'trial',
+    'active',
+    now() + interval '7 days'
   );
   return new;
 end;
-$$ language plpgsql security definer;
+$$ language plpgsql security definer set search_path = public;
 
 create trigger on_auth_user_created
   after insert on auth.users
