@@ -63,7 +63,7 @@ export default async function DashboardLayout({
             />
           </div>
           <p className="text-[10px] text-brand-beige mt-2 uppercase tracking-wide">
-            {profile.plan_tier === 'free' ? 'Free tier' : `${profile.plan_tier} plan`}
+            {planLabel(profile.plan_tier, profile.trial_ends_at)}
           </p>
         </div>
 
@@ -92,6 +92,18 @@ export default async function DashboardLayout({
       </main>
     </div>
   )
+}
+
+// v75.6: show trial days left instead of "trial plan".
+function planLabel(tier: string, trialEndsAt: string | null): string {
+  if (tier === 'free') return 'Free tier'
+  if (tier === 'trial') {
+    if (!trialEndsAt) return 'Free trial'
+    const daysLeft = Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    if (daysLeft <= 0) return 'Free trial ended'
+    return `Free trial · ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`
+  }
+  return `${tier} plan`
 }
 
 function NavLink({ href, label }: { href: string; label: string }) {

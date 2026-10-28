@@ -6,30 +6,79 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
+// v75.6: messages for the ?error= values the auth routes redirect here with.
+const LINK_ERRORS: Record<string, string> = {
+  link_expired:
+    'That link has expired or has already been used. If you have just confirmed your email, sign in below. If not, sign in and we will offer to send a new link.',
+  auth_callback_failed:
+    'We could not complete that sign-in link. If you have just confirmed your email, sign in below.',
+}
+
+// v75.6: only follow same-site relative paths after sign-in, so a crafted
+// ?redirect= link cannot send someone to another site.
+function safeRedirect(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/dashboard'
+  return raw
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [unconfirmed, setUnconfirmed] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [resent, setResent] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const redirect = searchParams.get('redirect') || '/dashboard'
+  const redirect = safeRedirect(searchParams.get('redirect'))
+  const errorKey = searchParams.get('error') || ''
+  // hasOwnProperty, so ?error=__proto__ cannot pull an object out of LINK_ERRORS
+  const linkError = Object.prototype.hasOwnProperty.call(LINK_ERRORS, errorKey) ? LINK_ERRORS[errorKey] : null
 
   const supabase = createClient()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    setUnconfirmed(false)
 
     const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      toast.error(error.message)
+      // v75.6: the account exists but the confirmation link has not been clicked.
+      // Offer to resend rather than leaving them stuck.
+      if (error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message)) {
+        setUnconfirmed(true)
+        setResent(false)
+      } else {
+        toast.error(error.message)
+      }
       setLoading(false)
       return
     }
 
     router.push(redirect)
     router.refresh()
+  }
+
+  async function handleResend() {
+    setResending(true)
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+      },
+    })
+    setResending(false)
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    setResent(true)
+    toast.success('Confirmation email sent. Check your inbox and spam folder.')
   }
 
   async function handleGoogleLogin() {
@@ -56,6 +105,33 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-brand-charcoal-deep rounded-2xl border border-brand-charcoal p-8">
+          {linkError && !unconfirmed && (
+            <div className="bg-brand-rose-gold/10 border border-brand-rose-gold/30 rounded-lg p-4 mb-6">
+              <p className="text-brand-cream text-sm">{linkError}</p>
+            </div>
+          )}
+
+          {unconfirmed && (
+            <div className="bg-brand-rose-gold/10 border border-brand-rose-gold/30 rounded-lg p-4 mb-6">
+              <p className="text-brand-cream text-sm font-semibold">Please confirm your email first</p>
+              <p className="text-brand-beige text-sm mt-1">
+                {resent
+                  ? <>We sent a new link to <strong className="text-brand-cream">{email}</strong>. It can take a minute or two, so check your spam folder too.</>
+                  : <>We sent a confirmation link to <strong className="text-brand-cream">{email}</strong> when you signed up. Click it, then sign in here.</>}
+              </p>
+              {!resent && (
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={resending}
+                  className="btn-secondary w-full mt-3"
+                >
+                  {resending ? 'Sending...' : 'Send the link again'}
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Google OAuth */}
           <button
             onClick={handleGoogleLogin}

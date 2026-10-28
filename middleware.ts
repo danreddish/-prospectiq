@@ -36,8 +36,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // Redirect logged-in users away from auth pages, except recovery flow
-  // (the user has a temporary session during password reset)
-  const authPassthrough = ['/auth/reset-password', '/auth/callback', '/auth/signout']
+  // (the user has a temporary session during password reset) and the email
+  // link handlers, which must run even if a session cookie already exists.
+  const authPassthrough = ['/auth/reset-password', '/auth/callback', '/auth/confirm', '/auth/signout']
   const isPassthrough = authPassthrough.some((p) => request.nextUrl.pathname.startsWith(p))
   if (request.nextUrl.pathname.startsWith('/auth/') && user && !isPassthrough) {
     const url = request.nextUrl.clone()

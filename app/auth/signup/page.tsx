@@ -1,10 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
+
+// v75.6: how long before "Resend email" can be pressed again (seconds).
+// Supabase also rate-limits resends per address, so this just stops double clicks.
+const RESEND_COOLDOWN = 60
 
 export default function SignupPage() {
   const [fullName, setFullName] = useState('')
@@ -12,14 +16,22 @@ export default function SignupPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [cooldown, setCooldown] = useState(0)
   const router = useRouter()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [cooldown])
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -34,7 +46,40 @@ export default function SignupPage() {
       return
     }
 
+    // v75.6: when "Confirm email" is off in Supabase, signUp returns a live
+    // session and no email is sent. Go straight in rather than telling the
+    // user to wait for an email that is never coming.
+    if (data.session) {
+      router.push('/dashboard')
+      router.refresh()
+      return
+    }
+
+    // Confirmation is on: Supabase has sent (or, for an address that already
+    // has an account, silently skipped) the confirmation email.
     setSent(true)
+    setLoading(false)
+    setCooldown(RESEND_COOLDOWN)
+  }
+
+  async function handleResend() {
+    setResending(true)
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+      },
+    })
+    setResending(false)
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    toast.success('Email sent again. Check your inbox and spam folder.')
+    setCooldown(RESEND_COOLDOWN)
   }
 
   if (sent) {
@@ -50,6 +95,38 @@ export default function SignupPage() {
               We sent a confirmation link to <strong className="text-brand-cream">{email}</strong>.
               Click the link to activate your account and start your free trial.
             </p>
+            <p className="text-brand-beige text-xs mt-4">
+              It can take a minute or two. If it is not in your inbox, check your spam or promotions folder.
+            </p>
+
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={resending || cooldown > 0}
+              className="btn-secondary w-full mt-6"
+            >
+              {resending
+                ? 'Sending...'
+                : cooldown > 0
+                  ? `Resend email (${cooldown}s)`
+                  : 'Resend email'}
+            </button>
+
+            <div className="flex justify-between text-sm mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setSent(false)
+                  setCooldown(0)
+                }}
+                className="text-brand-rose-gold hover:underline"
+              >
+                Wrong email address?
+              </button>
+              <Link href="/auth/login" className="text-brand-rose-gold hover:underline">
+                Already confirmed? Sign in
+              </Link>
+            </div>
           </div>
         </div>
       </div>
