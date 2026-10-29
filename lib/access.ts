@@ -8,11 +8,7 @@
 
 import { PLAN_LIMITS, type PlanTier } from '@/types'
 
-export const ADMIN_EMAILS = ['dan.reddish@gmail.com', 'dan@aiwealthpartners.co.uk']
-
-export function isAdmin(email: string | null | undefined): boolean {
-  return !!email && ADMIN_EMAILS.includes(email.toLowerCase())
-}
+export { ADMIN_EMAILS, isAdmin } from './admin'
 
 export type AccessReason =
   | 'ok'

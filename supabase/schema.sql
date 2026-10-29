@@ -22,6 +22,16 @@ create table public.profiles (
   trial_ends_at timestamptz,
   prospects_used_this_cycle int default 0,
   cycle_reset_at timestamptz default (now() + interval '30 days'),
+  service_profile jsonb default '{}'::jsonb,   -- account-level service offering (v75)
+  -- Recruitment mode (v76): a separate subscription from plan_tier
+  recruitment_status text not null default 'inactive' check (recruitment_status in ('inactive', 'active', 'past_due', 'cancelled')),
+  recruitment_period text check (recruitment_period is null or recruitment_period in ('monthly', 'annual')),
+  recruitment_subscription_id text,
+  recruitment_current_period_end timestamptz,
+  recruitment_advisers_used int not null default 0,
+  recruitment_finds_used int not null default 0,      -- adviser searches this cycle (v76)
+  recruitment_usage_reset_at timestamptz,
+  recruitment_profile jsonb default '{}'::jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -57,11 +67,17 @@ create table public.campaigns (
   niche text,                          -- campaign-level niche override
   sender_name text,                    -- campaign-level sender override
   prospect_count int default 0,
+  service_profile jsonb default '{}'::jsonb,   -- per-campaign service profile override (v75)
+  custom_instructions text,                    -- plain English batch instructions (v75)
+  audience_mode text check (audience_mode in ('match_profile', 'different_audience')),
+  purpose text not null default 'clients' check (purpose in ('clients', 'advisers')),  -- v76
+  recruitment_profile jsonb default '{}'::jsonb,  -- per-campaign recruitment profile override (v76)
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
 
 create index idx_campaigns_user on public.campaigns(user_id);
+create index idx_campaigns_user_purpose on public.campaigns(user_id, purpose);
 
 -- ============================================
 -- 3. PROSPECTS
@@ -100,6 +116,27 @@ create table public.prospects (
   -- Reply Coach conversation history
   conversations jsonb default '[]',
 
+  -- Apollo enrichment (v75)
+  email text,
+  phone text,
+  headline text,
+
+  -- Companies House financials (v75, hnw_clients source only)
+  company_number text,
+  accounts_category text,
+  turnover bigint,
+  total_assets bigint,
+  employee_count int,
+  accounts_last_filed date,
+
+  -- Recruitment mode (v76): adviser prospects and their FCA Register data
+  prospect_type text not null default 'client' check (prospect_type in ('client', 'adviser')),
+  fca_irn text,
+  fca_frn text,
+  fca_firm_name text,
+  fca_status text,
+  fca_data jsonb default '{}'::jsonb,   -- {current_functions[], previous_functions[], permissions[], tenure_months, years_approved, previous_firms[], moves_count, firm_signals{}, disciplinary, workplaces[]}
+
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -107,6 +144,7 @@ create table public.prospects (
 create index idx_prospects_campaign on public.prospects(campaign_id);
 create index idx_prospects_user on public.prospects(user_id);
 create index idx_prospects_status on public.prospects(status);
+create index idx_prospects_type on public.prospects(prospect_type);
 
 -- ============================================
 -- 4. USAGE EVENTS (for billing metering)
@@ -114,7 +152,7 @@ create index idx_prospects_status on public.prospects(status);
 create table public.usage_events (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references public.profiles(id) on delete cascade not null,
-  event_type text not null check (event_type in ('prospect_researched', 'prospect_refunded', 'prospects_found', 'find_refunded', 'campaign_created', 'export_generated')),
+  event_type text not null check (event_type in ('prospect_researched', 'prospect_refunded', 'prospects_found', 'find_refunded', 'campaign_created', 'export_generated', 'adviser_research', 'adviser_refunded', 'adviser_search', 'adviser_search_refunded')),
   prospect_count int default 1,
   metadata jsonb default '{}',
   created_at timestamptz default now()
@@ -622,3 +660,557 @@ REVOKE ALL ON FUNCTION public.increment_usage(uuid, integer) FROM PUBLIC, anon, 
 REVOKE ALL ON FUNCTION public.can_research_prospects(uuid, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.increment_usage(uuid, integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.can_research_prospects(uuid, integer) TO service_role;
+
+-- ============================================
+-- 11. RECRUITMENT (v76)
+-- Same as supabase/migrations/007_v76_recruitment.sql, sections 2-6. Its
+-- column changes (section 1) are in the tables above. Replaces the v75.7
+-- enforce_campaign_limit() above with the purpose-aware version.
+-- ============================================
+
+-- ---------- 2. Recruitment rules ----------
+
+-- Keep in step with RECRUITMENT_PLAN and PLAN_LIMITS.recruitment in types/index.ts.
+CREATE OR REPLACE FUNCTION public.get_recruitment_limits()
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public
+AS $$
+  SELECT '{"advisers_per_cycle": 100, "campaigns": 10, "watchlist_items": 200, "finds_per_cycle": 400}'::jsonb
+$$;
+
+-- 'ok' or why Recruitment is blocked. Mirrors recruitmentAccess() in
+-- lib/recruitment/access-rules.ts. Admin-enabled (beta) access has no
+-- Stripe subscription and ends at recruitment_current_period_end.
+-- past_due blocks access straight away (unlike client plans, where Stripe
+-- keeps retrying and the plan keeps working).
+CREATE OR REPLACE FUNCTION public.recruitment_access(p_status text, p_subscription_id text, p_period_end timestamptz)
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN p_status = 'active' AND p_subscription_id IS NULL
+         AND p_period_end IS NOT NULL AND p_period_end <= now() THEN 'recruitment_expired'
+    WHEN p_status = 'active'    THEN 'ok'
+    WHEN p_status = 'past_due'  THEN 'recruitment_payment_failed'
+    WHEN p_status = 'cancelled' THEN 'recruitment_cancelled'
+    ELSE 'recruitment_inactive'
+  END
+$$;
+
+-- The v76 draft functions were never applied, but drop them in case.
+DROP FUNCTION IF EXISTS public.can_research_advisers(uuid, int);
+DROP FUNCTION IF EXISTS public.increment_recruitment_usage(uuid, int);
+
+
+-- ---------- 3. Adviser research counting ----------
+
+-- Locks the profile row, starts a new 30-day recruitment cycle if the old
+-- one has run out, and returns the row. Shared by the consume functions.
+CREATE OR REPLACE FUNCTION public.lock_recruitment_for_usage(p_user_id uuid)
+RETURNS public.profiles
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_profile public.profiles;
+BEGIN
+  SELECT * INTO v_profile FROM public.profiles WHERE id = p_user_id FOR UPDATE;
+  IF FOUND AND (v_profile.recruitment_usage_reset_at IS NULL OR v_profile.recruitment_usage_reset_at < now()) THEN
+    UPDATE public.profiles
+       SET recruitment_advisers_used = 0,
+           recruitment_finds_used = 0,
+           recruitment_usage_reset_at = now() + interval '30 days'
+     WHERE id = p_user_id
+     RETURNING * INTO v_profile;
+  END IF;
+  RETURN v_profile;
+END;
+$$;
+
+-- Reserves one adviser research, or says why not.
+-- Returns {"ok": true, "used": n, "limit": n} or
+--         {"ok": false, "reason": "...", "used": n, "limit": n, "resets_at": "..."}.
+CREATE OR REPLACE FUNCTION public.consume_recruitment_research(p_user_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_profile public.profiles;
+  v_reason  text;
+  v_limit   int;
+BEGIN
+  v_profile := public.lock_recruitment_for_usage(p_user_id);
+  IF v_profile.id IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'reason', 'recruitment_inactive', 'used', 0, 'limit', 0);
+  END IF;
+
+  v_limit  := (public.get_recruitment_limits()->>'advisers_per_cycle')::int;
+  v_reason := public.recruitment_access(v_profile.recruitment_status, v_profile.recruitment_subscription_id,
+                                        v_profile.recruitment_current_period_end);
+
+  IF v_reason = 'ok' AND v_profile.recruitment_advisers_used >= v_limit THEN
+    v_reason := 'recruitment_limit_reached';
+  END IF;
+
+  IF v_reason <> 'ok' THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'reason', v_reason,
+      'used', v_profile.recruitment_advisers_used,
+      'limit', v_limit,
+      'resets_at', v_profile.recruitment_usage_reset_at
+    );
+  END IF;
+
+  UPDATE public.profiles
+     SET recruitment_advisers_used = recruitment_advisers_used + 1,
+         updated_at = now()
+   WHERE id = p_user_id;
+
+  INSERT INTO public.usage_events (user_id, event_type, prospect_count)
+  VALUES (p_user_id, 'adviser_research', 1);
+
+  RETURN jsonb_build_object('ok', true, 'used', v_profile.recruitment_advisers_used + 1, 'limit', v_limit);
+END;
+$$;
+
+-- Gives back an adviser research when the research itself failed. Capped
+-- at 10 refunds in 30 days, the same as client research. Returns whether
+-- it refunded.
+CREATE OR REPLACE FUNCTION public.refund_recruitment_research(p_user_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_recent int;
+BEGIN
+  PERFORM 1 FROM public.profiles WHERE id = p_user_id FOR UPDATE;
+
+  SELECT count(*) INTO v_recent
+    FROM public.usage_events
+   WHERE user_id = p_user_id
+     AND event_type = 'adviser_refunded'
+     AND created_at > now() - interval '30 days';
+  IF v_recent >= 10 THEN
+    RETURN false;
+  END IF;
+
+  UPDATE public.profiles
+     SET recruitment_advisers_used = greatest(recruitment_advisers_used - 1, 0),
+         updated_at = now()
+   WHERE id = p_user_id;
+
+  INSERT INTO public.usage_events (user_id, event_type, prospect_count)
+  VALUES (p_user_id, 'adviser_refunded', 1);
+  RETURN true;
+END;
+$$;
+
+
+-- ---------- 4. Adviser search budget ----------
+
+-- Reserves up to p_units of this month's adviser search budget. Grants
+-- what is left if that is less than asked. Returns
+--   {"ok": true, "granted": n, "used": n, "limit": n} or
+--   {"ok": false, "reason": "...", "used": n, "limit": n, "resets_at": "..."}.
+CREATE OR REPLACE FUNCTION public.consume_recruitment_find_units(p_user_id uuid, p_units int)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_profile public.profiles;
+  v_reason  text;
+  v_limit   int;
+  v_grant   int;
+BEGIN
+  v_profile := public.lock_recruitment_for_usage(p_user_id);
+  IF v_profile.id IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'reason', 'recruitment_inactive', 'used', 0, 'limit', 0);
+  END IF;
+
+  v_limit  := (public.get_recruitment_limits()->>'finds_per_cycle')::int;
+  v_reason := public.recruitment_access(v_profile.recruitment_status, v_profile.recruitment_subscription_id,
+                                        v_profile.recruitment_current_period_end);
+  v_grant  := least(greatest(coalesce(p_units, 0), 0), greatest(v_limit - v_profile.recruitment_finds_used, 0));
+
+  IF v_reason = 'ok' AND v_grant = 0 THEN
+    v_reason := 'recruitment_find_limit_reached';
+  END IF;
+
+  IF v_reason <> 'ok' THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'reason', v_reason,
+      'used', v_profile.recruitment_finds_used,
+      'limit', v_limit,
+      'resets_at', v_profile.recruitment_usage_reset_at
+    );
+  END IF;
+
+  UPDATE public.profiles
+     SET recruitment_finds_used = recruitment_finds_used + v_grant,
+         updated_at = now()
+   WHERE id = p_user_id;
+
+  INSERT INTO public.usage_events (user_id, event_type, prospect_count)
+  VALUES (p_user_id, 'adviser_search', v_grant);
+
+  RETURN jsonb_build_object('ok', true, 'granted', v_grant,
+                            'used', v_profile.recruitment_finds_used + v_grant, 'limit', v_limit);
+END;
+$$;
+
+-- Returns unused adviser search units, for example when Apollo returned
+-- fewer contacts than were reserved.
+CREATE OR REPLACE FUNCTION public.refund_recruitment_find_units(p_user_id uuid, p_units int)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF coalesce(p_units, 0) <= 0 THEN
+    RETURN;
+  END IF;
+
+  UPDATE public.profiles
+     SET recruitment_finds_used = greatest(recruitment_finds_used - p_units, 0),
+         updated_at = now()
+   WHERE id = p_user_id;
+
+  INSERT INTO public.usage_events (user_id, event_type, prospect_count)
+  VALUES (p_user_id, 'adviser_search_refunded', p_units);
+END;
+$$;
+
+-- Server only. Without this, any signed-in user could call these with
+-- someone else's id, or refund themselves endlessly.
+REVOKE ALL ON FUNCTION public.lock_recruitment_for_usage(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.consume_recruitment_research(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.refund_recruitment_research(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.consume_recruitment_find_units(uuid, int) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.refund_recruitment_find_units(uuid, int) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.lock_recruitment_for_usage(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.consume_recruitment_research(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.refund_recruitment_research(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.consume_recruitment_find_units(uuid, int) TO service_role;
+GRANT EXECUTE ON FUNCTION public.refund_recruitment_find_units(uuid, int) TO service_role;
+
+
+-- ---------- 5. Campaign limits, by purpose ----------
+
+-- Replaces the v75.7 version. Client campaigns: as before, but only client
+-- campaigns count. Recruitment campaigns: need Recruitment, up to its
+-- campaign limit. Admins are exempt from both.
+CREATE OR REPLACE FUNCTION public.enforce_campaign_limit()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_profile public.profiles;
+  v_reason  text;
+  v_limit   int;
+  v_count   int;
+BEGIN
+  -- Only limit inserts made with a user's own login, and never an admin's.
+  IF current_user NOT IN ('authenticated', 'anon') OR public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- Lock the profile row so two inserts at once can't both slip under the limit.
+  SELECT * INTO v_profile FROM public.profiles WHERE id = NEW.user_id FOR UPDATE;
+
+  IF NEW.purpose = 'advisers' THEN
+    v_reason := public.recruitment_access(v_profile.recruitment_status, v_profile.recruitment_subscription_id,
+                                          v_profile.recruitment_current_period_end);
+    IF v_reason <> 'ok' THEN
+      RAISE EXCEPTION 'Recruitment is not active on your account. Start it from the Recruitment page to create recruitment campaigns.'
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    v_limit := (public.get_recruitment_limits()->>'campaigns')::int;
+    SELECT count(*) INTO v_count FROM public.campaigns WHERE user_id = NEW.user_id AND purpose = 'advisers';
+    IF v_count >= v_limit THEN
+      RAISE EXCEPTION 'Recruitment includes % campaigns and you have used them all. Delete a recruitment campaign you no longer need.', v_limit
+        USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  v_reason := public.plan_access(v_profile.plan_tier, v_profile.plan_status, v_profile.trial_ends_at);
+  IF v_reason = 'trial_ended' THEN
+    RAISE EXCEPTION 'Your 7-day free trial has ended. Choose a plan in Settings to create campaigns.' USING ERRCODE = 'P0001';
+  ELSIF v_reason = 'payment_failed' THEN
+    RAISE EXCEPTION 'Your last payment did not go through. Update your card in Settings to create campaigns.' USING ERRCODE = 'P0001';
+  ELSIF v_reason <> 'ok' THEN
+    RAISE EXCEPTION 'Your account does not have an active plan. Choose a plan in Settings to create campaigns.' USING ERRCODE = 'P0001';
+  END IF;
+
+  v_limit := coalesce((public.get_plan_limits(v_profile.plan_tier)->>'campaigns')::int, 0);
+  SELECT count(*) INTO v_count FROM public.campaigns WHERE user_id = NEW.user_id AND purpose = 'clients';
+
+  IF v_count >= v_limit THEN
+    RAISE EXCEPTION 'Your plan includes % campaigns and you have used them all. Delete a campaign you no longer need, or upgrade in Settings.', v_limit
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS enforce_campaign_limit ON public.campaigns;
+CREATE TRIGGER enforce_campaign_limit
+  BEFORE INSERT ON public.campaigns
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_campaign_limit();
+
+-- The v76 draft had a separate recruitment trigger. enforce_campaign_limit covers it now.
+DROP TRIGGER IF EXISTS trg_recruitment_campaign_limit ON public.campaigns;
+DROP FUNCTION IF EXISTS public.enforce_recruitment_campaign_limit();
+
+-- A campaign keeps the purpose it was created with. Otherwise a recruitment
+-- campaign could be switched to client prospecting to get round the client
+-- plan's campaign limit, or the other way round.
+CREATE OR REPLACE FUNCTION public.protect_campaign_purpose()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') AND NEW.purpose IS DISTINCT FROM OLD.purpose THEN
+    RAISE EXCEPTION 'A campaign cannot be switched between client prospecting and recruitment.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS protect_campaign_purpose ON public.campaigns;
+CREATE TRIGGER protect_campaign_purpose
+  BEFORE UPDATE ON public.campaigns
+  FOR EACH ROW EXECUTE FUNCTION public.protect_campaign_purpose();
+
+
+-- ---------- 6. Lock the recruitment billing and usage columns ----------
+-- "Users can update own profile" would otherwise let a signed-in user set
+-- recruitment_status to active from the browser. The webhook, admin panel
+-- and research routes use the service role, and SECURITY DEFINER functions
+-- run as their owner, so those pass through. recruitment_profile stays
+-- user-editable.
+
+CREATE OR REPLACE FUNCTION public.protect_recruitment_columns()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') AND (
+       NEW.recruitment_status             IS DISTINCT FROM OLD.recruitment_status
+    OR NEW.recruitment_period             IS DISTINCT FROM OLD.recruitment_period
+    OR NEW.recruitment_subscription_id    IS DISTINCT FROM OLD.recruitment_subscription_id
+    OR NEW.recruitment_current_period_end IS DISTINCT FROM OLD.recruitment_current_period_end
+    OR NEW.recruitment_advisers_used      IS DISTINCT FROM OLD.recruitment_advisers_used
+    OR NEW.recruitment_finds_used         IS DISTINCT FROM OLD.recruitment_finds_used
+    OR NEW.recruitment_usage_reset_at     IS DISTINCT FROM OLD.recruitment_usage_reset_at
+  ) THEN
+    RAISE EXCEPTION 'Recruitment subscription details can only be changed by ProspectIQ.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_protect_recruitment_columns ON public.profiles;
+CREATE TRIGGER trg_protect_recruitment_columns
+  BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.protect_recruitment_columns();
+
+
+-- ============================================
+-- 12. RECRUITMENT WATCHLIST AND ALERTS (v76.1)
+-- Same as supabase/migrations/008_v76_1_watchlist.sql.
+-- ============================================
+
+-- ── Watchlist items ──
+CREATE TABLE IF NOT EXISTS public.watchlist_items (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  item_type text NOT NULL CHECK (item_type IN ('adviser', 'firm')),
+  fca_irn text,
+  fca_frn text,
+  display_name text NOT NULL,
+  firm_name text,
+  prospect_id uuid REFERENCES public.prospects(id) ON DELETE SET NULL,
+  campaign_id uuid REFERENCES public.campaigns(id) ON DELETE SET NULL,
+  last_checked_at timestamptz,
+  last_snapshot jsonb,
+  created_at timestamptz DEFAULT now(),
+  CONSTRAINT watchlist_items_identifier_check CHECK (
+    (item_type = 'adviser' AND fca_irn IS NOT NULL) OR
+    (item_type = 'firm' AND fca_frn IS NOT NULL)
+  )
+);
+
+-- One entry per user per adviser (IRN) and per firm (FRN)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_user_irn
+  ON public.watchlist_items(user_id, fca_irn) WHERE item_type = 'adviser';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_user_frn
+  ON public.watchlist_items(user_id, fca_frn) WHERE item_type = 'firm';
+
+-- The check job takes the oldest last_checked_at first, nulls first
+CREATE INDEX IF NOT EXISTS idx_watchlist_last_checked
+  ON public.watchlist_items(last_checked_at ASC NULLS FIRST);
+CREATE INDEX IF NOT EXISTS idx_watchlist_user ON public.watchlist_items(user_id);
+
+COMMENT ON COLUMN public.watchlist_items.last_snapshot IS
+  'Adviser: {status, current_frn, current_firm_name, current_functions[]}. Firm: {status, individual_count, ar_count, ar_count_is_minimum, requirement_count}.';
+
+-- ── Alerts ──
+CREATE TABLE IF NOT EXISTS public.alerts (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  watchlist_item_id uuid REFERENCES public.watchlist_items(id) ON DELETE CASCADE NOT NULL,
+  alert_type text NOT NULL CHECK (alert_type IN (
+    'adviser_status_changed', 'adviser_moved_firm', 'adviser_left_firm', 'adviser_new_function',
+    'firm_status_changed', 'firm_headcount_drop', 'firm_ar_count_drop', 'firm_requirements_added'
+  )),
+  title text NOT NULL,
+  detail jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz DEFAULT now(),
+  read_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_user_read ON public.alerts(user_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_user_created ON public.alerts(user_id, created_at DESC);
+
+-- ── Row level security: users see only their own rows ──
+ALTER TABLE public.watchlist_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own watchlist" ON public.watchlist_items;
+CREATE POLICY "Users can view own watchlist"
+  ON public.watchlist_items FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can add to own watchlist" ON public.watchlist_items;
+CREATE POLICY "Users can add to own watchlist"
+  ON public.watchlist_items FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can remove from own watchlist" ON public.watchlist_items;
+CREATE POLICY "Users can remove from own watchlist"
+  ON public.watchlist_items FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Snapshots and check times are written by the service role only, so there
+-- is no update policy on watchlist_items. Alerts are inserted by the service
+-- role only; users can read them and mark them read.
+DROP POLICY IF EXISTS "Users can view own alerts" ON public.alerts;
+CREATE POLICY "Users can view own alerts"
+  ON public.alerts FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can mark own alerts read" ON public.alerts;
+CREATE POLICY "Users can mark own alerts read"
+  ON public.alerts FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- ── 200 item limit, enforced in the database ──
+-- Not SECURITY DEFINER, so current_user is the caller's role. A browser
+-- insert needs Recruitment (the insert policy alone would let anyone add
+-- items). Admins are exempt from the access check and the limit. The
+-- profile row lock stops two inserts at once from both slipping under the
+-- limit.
+CREATE OR REPLACE FUNCTION public.enforce_watchlist_limit()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_profile public.profiles;
+  v_admin boolean;
+  v_count int;
+  v_limit int;
+BEGIN
+  v_admin := current_user IN ('authenticated', 'anon') AND public.is_admin();
+
+  SELECT * INTO v_profile FROM public.profiles WHERE id = NEW.user_id FOR UPDATE;
+
+  IF current_user IN ('authenticated', 'anon') AND NOT v_admin
+     AND public.recruitment_access(v_profile.recruitment_status, v_profile.recruitment_subscription_id,
+                                   v_profile.recruitment_current_period_end) <> 'ok' THEN
+    RAISE EXCEPTION 'Recruitment is not active on your account.' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Identifiers must look like register numbers, so junk can't clog the
+  -- check queue. IRNs are letters then digits (e.g. ABC01234), FRNs digits.
+  IF NEW.item_type = 'adviser' AND NEW.fca_irn !~ '^[A-Za-z]{2,4}[0-9]{4,6}$' THEN
+    RAISE EXCEPTION 'That is not an FCA individual reference number.' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.item_type = 'firm' AND NEW.fca_frn !~ '^[0-9]{5,7}$' THEN
+    RAISE EXCEPTION 'That is not an FCA firm reference number.' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Foreign keys ignore row level security, so check the linked prospect and
+  -- campaign belong to the same user.
+  IF NEW.prospect_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.prospects WHERE id = NEW.prospect_id AND user_id = NEW.user_id) THEN
+    RAISE EXCEPTION 'Prospect not found.' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.campaign_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.campaigns WHERE id = NEW.campaign_id AND user_id = NEW.user_id) THEN
+    RAISE EXCEPTION 'Campaign not found.' USING ERRCODE = 'P0001';
+  END IF;
+
+  v_limit := (public.get_recruitment_limits()->>'watchlist_items')::int;
+  SELECT count(*) INTO v_count FROM public.watchlist_items WHERE user_id = NEW.user_id;
+  IF v_count >= v_limit AND NOT v_admin THEN
+    RAISE EXCEPTION 'Watchlist limit reached (%). Remove an item first.', v_limit USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_watchlist_limit ON public.watchlist_items;
+CREATE TRIGGER trg_watchlist_limit
+  BEFORE INSERT ON public.watchlist_items
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_watchlist_limit();
+
+-- ── Alerts: users may only mark them read ──
+-- The update policy lets a user update their own alerts. Without this, they
+-- could rewrite an alert, or move created_at into the future so the daily
+-- digest kept resending it.
+CREATE OR REPLACE FUNCTION public.protect_alert_columns()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') AND (
+       NEW.user_id           IS DISTINCT FROM OLD.user_id
+    OR NEW.watchlist_item_id IS DISTINCT FROM OLD.watchlist_item_id
+    OR NEW.alert_type        IS DISTINCT FROM OLD.alert_type
+    OR NEW.title             IS DISTINCT FROM OLD.title
+    OR NEW.detail            IS DISTINCT FROM OLD.detail
+    OR NEW.created_at        IS DISTINCT FROM OLD.created_at
+  ) THEN
+    RAISE EXCEPTION 'Alerts can only be marked as read.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_protect_alert_columns ON public.alerts;
+CREATE TRIGGER trg_protect_alert_columns
+  BEFORE UPDATE ON public.alerts
+  FOR EACH ROW EXECUTE FUNCTION public.protect_alert_columns();

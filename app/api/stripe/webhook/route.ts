@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getStripe, getTierFromPriceId } from '@/lib/stripe'
+import { syncRecruitment, isRecruitmentSubscription, subscriptionPriceId, invoiceIsRecruitment } from '@/lib/recruitment/billing'
 import { createAdminClient } from '@/lib/supabase/server'
 import Stripe from 'stripe'
+
+// Recruitment (v76) is a separate subscription from the plan tiers. A
+// Recruitment subscription (tagged product 'recruitment' by our checkout, or
+// on a Recruitment price) only ever writes the recruitment_* columns, through
+// syncRecruitment(). The plan columns are left alone. Client plans behave as
+// before.
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -29,9 +36,10 @@ export async function POST(req: NextRequest) {
         const userId = session.metadata?.userId
         if (!userId) break
 
-        // Link Stripe customer to user profile. v75.7: plan and status come
-        // from the subscription events, so this no longer marks the account
-        // as trialing (there is no Stripe trial any more).
+        // Link the Stripe customer to the user, for plan and Recruitment
+        // checkouts alike. v75.7: plan and Recruitment status come from the
+        // subscription events below, so nothing else is set here (there is
+        // no Stripe trial for either product).
         await supabase
           .from('profiles')
           .update({
@@ -46,8 +54,14 @@ export async function POST(req: NextRequest) {
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription
         const customerId = subscription.customer as string
-        const priceId = subscription.items.data[0]?.price.id
-        const tier = getTierFromPriceId(priceId)
+        const priceId = subscriptionPriceId(subscription)
+
+        if (isRecruitmentSubscription(subscription)) {
+          await syncRecruitment(supabase, getStripe(), subscription)
+          break
+        }
+
+        const tier = getTierFromPriceId(priceId || '')
 
         // v75.7: plan status now decides access, so unknown values fail
         // closed. 'incomplete' means the first payment hasn't gone through.
@@ -91,6 +105,13 @@ export async function POST(req: NextRequest) {
         const subscription = event.data.object as Stripe.Subscription
         const customerId = subscription.customer as string
 
+        if (isRecruitmentSubscription(subscription)) {
+          // A deleted subscription reads as 'canceled', so this marks
+          // Recruitment cancelled unless another subscription is live.
+          await syncRecruitment(supabase, getStripe(), subscription)
+          break
+        }
+
         await supabase
           .from('profiles')
           .update({
@@ -105,6 +126,14 @@ export async function POST(req: NextRequest) {
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
         const customerId = invoice.customer as string
+
+        if (invoiceIsRecruitment(invoice)) {
+          // The subscription's own status (past_due, or incomplete for a
+          // first payment) decides, through the same rules as above.
+          const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id
+          if (subId) await syncRecruitment(supabase, getStripe(), await getStripe().subscriptions.retrieve(subId))
+          break
+        }
 
         await supabase
           .from('profiles')

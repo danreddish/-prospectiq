@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { Prospect } from '@/types'
 import CampaignDashboard from './campaign-dashboard'
 
@@ -19,6 +19,9 @@ export default async function CampaignDetailPage({
     .single()
 
   if (!campaign) notFound()
+
+  // Recruitment campaigns have their own dashboard (v76)
+  if (campaign.purpose === 'advisers') redirect(`/dashboard/recruitment/campaigns/${campaign.id}`)
 
   const { data: prospects } = await supabase
     .from('prospects')

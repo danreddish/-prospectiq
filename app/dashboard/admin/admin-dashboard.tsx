@@ -17,6 +17,12 @@ interface UserRow {
   campaignCount: number
   prospectTotal: number
   prospectCompleted: number
+  // v76 Recruitment (separate subscription)
+  recruitment_status?: string | null
+  recruitment_period?: string | null
+  recruitment_current_period_end?: string | null
+  recruitment_advisers_used?: number | null
+  adviserCompleted?: number
 }
 
 interface Props {
@@ -142,6 +148,60 @@ export default function AdminDashboard({ users: initialUsers }: Props) {
     }
   }
 
+  // v76: Recruitment on/off for beta onboarding (30 day period end), and usage reset.
+  async function toggleRecruitment(userId: string, enable: boolean) {
+    setUpdating(userId)
+    try {
+      const res = await fetch('/api/admin/update-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, recruitment: enable, days: 30 }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Update failed')
+
+      setUsers(users.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              recruitment_status: enable ? 'active' : 'inactive',
+              recruitment_advisers_used: enable ? 0 : u.recruitment_advisers_used,
+              recruitment_current_period_end: enable ? data.updated?.recruitment_current_period_end || null : u.recruitment_current_period_end,
+            }
+          : u
+      ))
+      toast.success(enable ? 'Recruitment enabled for 30 days' : 'Recruitment disabled')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Update failed'
+      toast.error(message)
+    } finally {
+      setUpdating(null)
+    }
+  }
+
+  async function resetRecruitmentUsage(userId: string) {
+    setUpdating(userId)
+    try {
+      const res = await fetch('/api/admin/update-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, reset_recruitment_usage: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Reset failed')
+
+      setUsers(users.map((u) =>
+        u.id === userId ? { ...u, recruitment_advisers_used: 0 } : u
+      ))
+      toast.success('Recruitment usage reset')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Reset failed'
+      toast.error(message)
+    } finally {
+      setUpdating(null)
+    }
+  }
+
   async function resetUsage(userId: string) {
     setUpdating(userId)
     try {
@@ -213,13 +273,14 @@ export default function AdminDashboard({ users: initialUsers }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-6 gap-4 mb-6">
         {[
           { label: 'Total Users', value: users.length, accent: 'text-brand-cream' },
           { label: 'On Trial', value: statusCounts.trialing, accent: 'text-yellow-400' },
           { label: 'Cancelled', value: statusCounts.canceled, accent: 'text-red-400' },
           { label: 'Paying', value: statusCounts.paying, accent: 'text-green-400' },
           { label: 'Prospects Researched', value: users.reduce((sum, u) => sum + u.prospectCompleted, 0), accent: 'text-brand-cream' },
+          { label: 'Recruitment Users', value: users.filter((u) => u.recruitment_status === 'active').length, accent: 'text-purple-400' },
         ].map((s) => (
           <div key={s.label} className="bg-brand-charcoal-deep rounded-xl border border-brand-charcoal p-4">
             <p className="text-brand-beige text-[10px] uppercase tracking-wider">{s.label}</p>
@@ -257,6 +318,7 @@ export default function AdminDashboard({ users: initialUsers }: Props) {
               <th className="p-3 text-brand-beige text-xs font-semibold uppercase tracking-wider">Usage</th>
               <th className="p-3 text-brand-beige text-xs font-semibold uppercase tracking-wider">Campaigns</th>
               <th className="p-3 text-brand-beige text-xs font-semibold uppercase tracking-wider">Prospects</th>
+              <th className="p-3 text-brand-beige text-xs font-semibold uppercase tracking-wider">Recruitment</th>
               <th className="p-3 text-brand-beige text-xs font-semibold uppercase tracking-wider">Joined</th>
               <th className="p-3 text-brand-beige text-xs font-semibold uppercase tracking-wider">Actions</th>
             </tr>
@@ -293,6 +355,34 @@ export default function AdminDashboard({ users: initialUsers }: Props) {
                     <p className="text-brand-cream">{user.prospectCompleted}</p>
                     <p className="text-brand-charcoal text-[10px]">{user.prospectTotal} total</p>
                   </td>
+                  <td className="p-3">
+                    {(() => {
+                      const rs = user.recruitment_status || 'inactive'
+                      const isOn = rs === 'active'
+                      const classes = isOn
+                        ? 'bg-purple-900/40 text-purple-300 border-purple-900'
+                        : rs === 'past_due'
+                        ? 'bg-orange-900/40 text-orange-400 border-orange-900'
+                        : rs === 'cancelled'
+                        ? 'bg-red-900/40 text-red-400 border-red-900'
+                        : 'bg-brand-charcoal text-brand-beige border-brand-charcoal'
+                      const periodEnd = user.recruitment_current_period_end
+                        ? new Date(user.recruitment_current_period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                        : null
+                      return (
+                        <div>
+                          <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase border ${classes}`}>
+                            {rs === 'inactive' ? 'OFF' : rs.replace('_', ' ')}
+                          </span>
+                          <p className="text-brand-beige text-[10px] mt-1.5">
+                            {isOn ? `${user.recruitment_advisers_used || 0}/100 advisers` : 'No access'}
+                            {isOn && periodEnd ? ` · to ${periodEnd}` : ''}
+                            {user.recruitment_period ? ` · ${user.recruitment_period}` : ''}
+                          </p>
+                        </div>
+                      )
+                    })()}
+                  </td>
                   <td className="p-3 text-brand-beige text-xs">
                     {new Date(user.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                   </td>
@@ -319,6 +409,27 @@ export default function AdminDashboard({ users: initialUsers }: Props) {
                       >
                         Reset
                       </button>
+                      <span className="w-px h-5 bg-brand-charcoal mx-0.5" />
+                      <button
+                        onClick={() => toggleRecruitment(user.id, user.recruitment_status !== 'active')}
+                        disabled={updating === user.id}
+                        title={user.recruitment_status === 'active' ? 'Turn Recruitment off' : 'Turn Recruitment on for 30 days'}
+                        className={`text-[9px] px-2 py-1 rounded border transition-colors ${
+                          user.recruitment_status === 'active'
+                            ? 'border-purple-700 text-purple-300 hover:border-red-700 hover:text-red-400'
+                            : 'border-brand-charcoal text-brand-beige hover:border-purple-500 hover:text-purple-300'
+                        }`}
+                      >
+                        {user.recruitment_status === 'active' ? 'Recruit: on' : 'Recruit: off'}
+                      </button>
+                      <button
+                        onClick={() => resetRecruitmentUsage(user.id)}
+                        disabled={updating === user.id}
+                        title="Reset recruitment usage"
+                        className="text-[9px] px-2 py-1 rounded border border-brand-charcoal text-brand-beige hover:border-purple-500 hover:text-purple-300 transition-colors"
+                      >
+                        Reset recruit
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -326,7 +437,7 @@ export default function AdminDashboard({ users: initialUsers }: Props) {
             })}
             {filteredUsers.length === 0 && (
               <tr>
-                <td colSpan={8} className="p-8 text-center text-brand-beige text-sm">
+                <td colSpan={9} className="p-8 text-center text-brand-beige text-sm">
                   No users match this filter.
                 </td>
               </tr>

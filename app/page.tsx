@@ -322,7 +322,7 @@ export default function HomePage() {
             7-day free trial on all plans. No card required.
           </p>
           <p className="text-brand-charcoal text-sm mb-12">
-            All prices exclude VAT.
+            All prices include VAT.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -341,7 +341,7 @@ export default function HomePage() {
                 <h3 className="text-brand-cream text-2xl font-display mb-2">{plan.name}</h3>
                 <div className="flex items-baseline gap-1 mb-6">
                   <span className="text-brand-cream text-4xl font-display">&pound;{plan.price}</span>
-                  <span className="text-brand-beige text-sm">/mo + VAT</span>
+                  <span className="text-brand-beige text-sm">/mo inc. VAT</span>
                 </div>
                 <Link
                   href="/auth/signup"

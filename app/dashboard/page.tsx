@@ -5,10 +5,12 @@ export default async function DashboardPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
+  // Client prospecting only. Recruitment campaigns live under /dashboard/recruitment.
   const { data: campaigns } = await supabase
     .from('campaigns')
     .select('*, prospects(count)')
     .eq('user_id', user!.id)
+    .eq('purpose', 'clients')
     .order('created_at', { ascending: false })
     .limit(10)
 
@@ -17,6 +19,7 @@ export default async function DashboardPage() {
     .select('*')
     .eq('user_id', user!.id)
     .eq('status', 'completed')
+    .eq('prospect_type', 'client')
     .order('created_at', { ascending: false })
     .limit(5)
 

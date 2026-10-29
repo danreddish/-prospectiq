@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption } from '@/types'
+import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption, ADVISER_SCORE_LABELS, AdviserFcaData } from '@/types'
 import { toast } from 'sonner'
 import {
   isLinkedInProfileUrl,
@@ -11,15 +11,74 @@ import {
   normaliseLinkedInUrl,
 } from '@/lib/linkedin'
 import { cleanPersonName, hasSurname, SURNAME_MISSING_NOTE } from '@/lib/names'
+import { researchAdvisersSequentially } from '@/lib/recruitment/research-client'
+import { fcaIndividualUrl, fcaFirmUrl } from '@/lib/recruitment/links'
 
 interface Props {
   campaign: Campaign
   prospects: Prospect[]
   pendingProspects: Prospect[]
+  // v76: 'advisers' renders the recruitment view of this dashboard
+  mode?: 'clients' | 'advisers'
+  // v76.1: watchlist state for the Watch adviser / Watch firm buttons
+  watchedIrns?: string[]
+  watchedFrns?: string[]
+  initialProspectId?: string | null
 }
 
-export default function CampaignDashboard({ campaign, prospects, pendingProspects }: Props) {
-  const [selected, setSelected] = useState<Prospect | null>(prospects[0] || null)
+const WATCHLIST_ENABLED = true
+
+const ADVISER_SCORE_ORDER = ['quality', 'move_likelihood', 'accessibility', 'fit']
+
+function adviserData(p: Prospect | null): AdviserFcaData | null {
+  if (!p || p.prospect_type !== 'adviser') return null
+  const d = p.fca_data as AdviserFcaData | null
+  return d && typeof d === 'object' ? d : null
+}
+
+function formatTenure(months: number | null | undefined): string {
+  if (months === null || months === undefined) return 'Unknown'
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'}`
+  const years = Math.floor(months / 12)
+  const rem = months % 12
+  return rem ? `${years}y ${rem}m` : `${years} year${years === 1 ? '' : 's'}`
+}
+
+function formatMonthYear(iso: string | null | undefined): string {
+  if (!iso) return 'Unknown'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+}
+
+export default function CampaignDashboard({ campaign, prospects, pendingProspects, mode = 'clients', watchedIrns = [], watchedFrns = [], initialProspectId = null }: Props) {
+  const isAdviser = mode === 'advisers'
+  const [selected, setSelected] = useState<Prospect | null>(
+    (initialProspectId && prospects.find((p) => p.id === initialProspectId)) || prospects[0] || null
+  )
+  const [watching, setWatching] = useState<{ irns: string[]; frns: string[] }>({ irns: watchedIrns, frns: watchedFrns })
+  const [watchBusy, setWatchBusy] = useState<'adviser' | 'firm' | null>(null)
+
+  async function watch(type: 'adviser' | 'firm') {
+    if (!selected) return
+    setWatchBusy(type)
+    try {
+      const res = await fetch('/api/recruitment/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_type: type, prospect_id: selected.id }),
+      })
+      const data = await res.json()
+      if (!res.ok && data.code !== 'duplicate') throw new Error(data.error || 'Could not add to watchlist')
+      setWatching((prev) => type === 'adviser'
+        ? { ...prev, irns: [...prev.irns, selected.fca_irn || ''] }
+        : { ...prev, frns: [...prev.frns, selected.fca_frn || ''] })
+      toast.success(type === 'adviser' ? `Watching ${selected.name}` : `Watching ${selected.fca_firm_name || 'the firm'}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not add to watchlist')
+    } finally {
+      setWatchBusy(null)
+    }
+  }
   const [activeTab, setActiveTab] = useState<'outreach' | 'research' | 'scores' | 'reply-coach'>('outreach')
   const [tierFilter, setTierFilter] = useState<'all' | 'A' | 'B' | 'C'>('all')
   const [copiedStep, setCopiedStep] = useState<number | null>(null)
@@ -71,6 +130,24 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     let failed = 0
     let planStop = '' // v75.7
     setResearchProgress({ completed: 0, total })
+
+    if (isAdviser) {
+      const result = await researchAdvisersSequentially(
+        campaign.id,
+        toResearch.map((p) => ({ id: p.id, frn: p.fca_frn })),
+        (done, t) => setResearchProgress({ completed: done, total: t })
+      )
+      setResearching(false)
+      if (result.limitHit) {
+        toast.error(result.completed > 0 ? `${result.lastError} ${result.completed} researched before that.` : result.lastError, { duration: 10000 })
+      } else if (result.completed > 0) {
+        toast.success(`Researched ${result.completed} adviser${result.completed === 1 ? '' : 's'}${result.failed > 0 ? ` (${result.failed} failed)` : ''}`)
+      } else {
+        toast.error(`All research requests failed: ${result.lastError || 'Unknown error'}`)
+      }
+      if (result.completed > 0) window.location.reload()
+      return
+    }
 
     for (const prospect of toResearch) {
       try {
@@ -209,6 +286,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
 
   // ── CSV Export ─────────────────────────────
   function exportCSV() {
+    if (isAdviser) return exportAdviserCSV()
     const headers = [
       'Name', 'Role', 'Company', 'Location', 'Tier', 'Total Score',
       'Wealth Score', 'Timing Score', 'Accessibility Score', 'Complexity Score',
@@ -257,6 +335,110 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     toast.success(`Exported ${rows.length} prospects to CSV`)
   }
 
+  function downloadCsv(headers: string[], rows: (string | number)[][], suffix: string) {
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${campaign.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${suffix}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+    toast.success(`Exported ${rows.length} to CSV`)
+  }
+
+  function exportAdviserCSV() {
+    const headers = [
+      'Name', 'Firm', 'Role', 'Location', 'Tier', 'Total Score',
+      'Adviser Quality', 'Move Likelihood', 'Accessibility', 'Fit',
+      'FCA IRN', 'FCA Status', 'Register Firm', 'Register FRN', 'Customer Function',
+      'Tenure at Firm (months)', 'Years Approved', 'Previous Moves', 'Previous Firms',
+      'Firm Status', 'Firm Headcount', 'Firm AR Count', 'Firm Restrictions',
+      'Disciplinary History', 'Risk Flags', 'Key Signals', 'Talking Points',
+      'LinkedIn', 'Email', 'Phone', 'Headline',
+      'Step 1 - Connection Request', 'Step 2 - Welcome Message', 'Step 3 - Value + CTA',
+      'Summary',
+    ]
+    const rows = prospects
+      .filter((p) => p.status === 'completed')
+      .sort((a, b) => b.total_score - a.total_score)
+      .map((p) => {
+        const d = adviserData(p)
+        const fs = d?.firm_signals
+        const cf = d?.current_functions?.find((f) => f.customer_facing)
+        return [
+          p.name,
+          p.company || '',
+          p.role || '',
+          p.location || '',
+          p.tier || '',
+          p.total_score,
+          p.scores?.quality ?? '',
+          p.scores?.move_likelihood ?? '',
+          p.scores?.accessibility ?? '',
+          p.scores?.fit ?? '',
+          p.fca_irn || '',
+          p.fca_status || (d && !d.verified ? 'Not on register' : ''),
+          p.fca_firm_name || '',
+          p.fca_frn || '',
+          cf?.name || '',
+          d?.tenure_months ?? '',
+          d?.years_approved ?? '',
+          d?.moves_count ?? '',
+          (d?.previous_firms || []).map((f) => f.name).join('; '),
+          fs?.status || '',
+          fs?.individual_count ?? '',
+          fs ? `${fs.ar_count ?? ''}${fs.ar_count_is_minimum ? '+' : ''}` : '',
+          fs ? (fs.restriction_count ?? fs.requirement_count) : '',
+          d?.disciplinary ? 'Yes' : 'No',
+          (d?.risk_flags || []).join('; '),
+          (d?.key_signals || []).join('; '),
+          (d?.talking_points || []).join('; '),
+          p.linkedin_url || '',
+          p.email || '',
+          p.phone || '',
+          p.headline || '',
+          p.outreach?.step1?.message || '',
+          p.outreach?.step2?.message || '',
+          p.outreach?.step3?.message || '',
+          d?.summary || p.research_notes || '',
+        ]
+      })
+    downloadCsv(headers, rows, 'advisers')
+  }
+
+  function escapeHtml(value: string | null | undefined): string {
+    return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  }
+
+  function adviserPdfBlock(p: Prospect): string {
+    const d = adviserData(p)
+    const fs = d?.firm_signals
+    const cf = d?.current_functions?.find((f) => f.customer_facing)
+    const scoreItems = ADVISER_SCORE_ORDER.map((k) => `<div class="score-item"><div class="val">${p.scores?.[k] || 0}</div><div class="lbl">${escapeHtml(ADVISER_SCORE_LABELS[k])}</div></div>`).join('')
+    const facts = [
+      p.fca_irn ? `IRN ${escapeHtml(p.fca_irn)}` : (d && !d.verified ? 'Not on register' : ''),
+      cf ? escapeHtml(cf.name) : '',
+      d?.tenure_months !== null && d?.tenure_months !== undefined ? `${formatTenure(d.tenure_months)} at current firm` : '',
+      d?.years_approved !== null && d?.years_approved !== undefined ? `${d.years_approved} years approved` : '',
+      d ? `${d.moves_count} previous move${d.moves_count === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(' · ')
+    const restrictions = fs ? (fs.restriction_count ?? fs.requirement_count) : 0
+    const firmLine = fs ? `${escapeHtml(fs.name)} (FRN ${escapeHtml(fs.frn)}), ${escapeHtml(fs.status)}, ${fs.individual_count ?? '?'} individuals, ${fs.ar_count ?? '?'}${fs.ar_count_is_minimum ? '+' : ''} ARs, ${restrictions} restriction${restrictions === 1 ? '' : 's'}` : ''
+    const list = (title: string, items: string[] | undefined, colour: string) => items && items.length
+      ? `<div style="margin:6px 0"><div style="font-size:9px;font-weight:700;color:${colour};text-transform:uppercase;letter-spacing:1px">${title}</div><ul style="margin:2px 0 0 14px;font-size:10px;color:#333">${items.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>`
+      : ''
+    return `<div class="scores">${scoreItems}</div>
+${facts ? `<div style="font-size:10px;color:#555;margin:4px 0">${facts}</div>` : ''}
+${firmLine ? `<div style="font-size:10px;color:#555;margin:2px 0">Firm: ${firmLine}</div>` : ''}
+${d?.summary || p.research_notes ? `<div class="research">${escapeHtml(d?.summary || p.research_notes)}</div>` : ''}
+${list('Risk flags', d?.risk_flags, '#b45309')}
+${list('Key signals', d?.key_signals, '#c49f8c')}
+${list('Talking points', d?.talking_points, '#666')}`
+  }
+
   // ── PDF Export (opens print-ready page) ────
   function exportPDF() {
     const completed = prospects
@@ -272,7 +454,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     const html = `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8">
-<title>${campaign.name} - ProspectIQ Report</title>
+<title>${campaign.name} - ProspectIQ ${isAdviser ? 'Recruitment ' : ''}Report</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;font-size:11px;line-height:1.5}
@@ -305,10 +487,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1
 </head><body>
 <div class="header">
 <div><div class="brand">AI Wealth Partners | ProspectIQ</div><h1>${campaign.name}</h1></div>
-<div class="meta">${campaign.niche || ''}<br>${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+<div class="meta">${isAdviser ? 'Adviser recruitment' : (campaign.niche || '')}<br>${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
 </div>
 <div class="summary">
-<div class="stat"><div class="num">${completed.length}</div><div class="lbl">Prospects</div></div>
+<div class="stat"><div class="num">${completed.length}</div><div class="lbl">${isAdviser ? 'Advisers' : 'Prospects'}</div></div>
 <div class="stat"><div class="num" style="color:#c49f8c">${tierCounts.A}</div><div class="lbl">Tier A</div></div>
 <div class="stat"><div class="num">${tierCounts.B}</div><div class="lbl">Tier B</div></div>
 <div class="stat"><div class="num">${tierCounts.C}</div><div class="lbl">Tier C</div></div>
@@ -318,14 +500,14 @@ ${completed.map((p, i) => `
 <div class="prospect-header">
 <div>
 <div class="prospect-name">${i + 1}. ${p.name}</div>
-<div class="prospect-role">${p.role || 'Director'} at ${p.company || 'Unknown'}${p.location ? ' — ' + p.location : ''}</div>
+<div class="prospect-role">${p.role || (isAdviser ? 'Adviser' : 'Director')} at ${p.company || 'Unknown'}${p.location ? (isAdviser ? ', ' : ' — ') + p.location : ''}</div>
 </div>
 <div style="text-align:right">
 <span class="tier-badge" style="background:${tierColor(p.tier)}">TIER ${p.tier || 'C'}</span>
 <div style="font-size:16px;font-weight:700;margin-top:4px">${p.total_score}/40</div>
 </div>
 </div>
-<div class="scores">
+${isAdviser ? adviserPdfBlock(p) : `<div class="scores">
 <div class="score-item"><div class="val">${p.scores?.wealth || 0}</div><div class="lbl">Wealth</div></div>
 <div class="score-item"><div class="val">${p.scores?.timing || 0}</div><div class="lbl">Timing</div></div>
 <div class="score-item"><div class="val">${p.scores?.accessibility || 0}</div><div class="lbl">Access</div></div>
@@ -334,7 +516,7 @@ ${completed.map((p, i) => `
 <div class="score-item"><div class="val" style="font-size:11px">${p.est_age || 'N/A'}</div><div class="lbl">Est. Age</div></div>
 </div>
 ${p.key_trigger ? `<div style="font-size:11px;color:#c49f8c;font-weight:600;margin:6px 0">Key trigger: ${p.key_trigger}</div>` : ''}
-${p.research_notes ? `<div class="research">${p.research_notes}</div>` : ''}
+${p.research_notes ? `<div class="research">${p.research_notes}</div>` : ''}`}
 ${p.linkedin_url ? `<div style="font-size:10px;margin:4px 0"><a href="${p.linkedin_url}" style="color:#0A66C2">${p.linkedin_url.includes('/in/') ? 'LinkedIn Profile' : 'Search LinkedIn'}</a></div>` : ''}
 ${p.email ? `<div style="font-size:10px;margin:2px 0"><strong>Email:</strong> <a href="mailto:${p.email}" style="color:#333">${p.email}</a></div>` : ''}
 ${p.phone ? `<div style="font-size:10px;margin:2px 0"><strong>Phone:</strong> ${p.phone}</div>` : ''}
@@ -364,9 +546,11 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
     return (
       <div className="text-center py-20">
         <h2 className="text-brand-cream text-xl font-display mb-2">{campaign.name}</h2>
-        <p className="text-brand-beige mb-6">No completed prospects yet. Add prospects and run research.</p>
-        <a href="/dashboard/campaigns/new" className="btn-primary text-sm">
-          Add Prospects
+        <p className="text-brand-beige mb-6">
+          {isAdviser ? 'No researched advisers yet. Find advisers and run research.' : 'No completed prospects yet. Add prospects and run research.'}
+        </p>
+        <a href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : '/dashboard/campaigns/new'} className="btn-primary text-sm">
+          {isAdviser ? 'Find Advisers' : 'Add Prospects'}
         </a>
       </div>
     )
@@ -379,15 +563,15 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
         {/* Campaign header */}
         <div className="p-5 border-b border-brand-charcoal">
           <p className="text-brand-rose-gold text-[10px] font-bold tracking-[2px] uppercase">
-            AI Wealth Partners
+            {isAdviser ? 'Recruitment' : 'AI Wealth Partners'}
           </p>
           <h2 className="text-brand-cream text-lg font-display mt-0.5">{campaign.name}</h2>
           <p className="text-brand-beige text-xs mt-1">
-            {campaign.niche || 'No niche set'} &middot; {prospects.length} prospects
+            {isAdviser ? 'Adviser recruitment' : (campaign.niche || 'No niche set')} &middot; {prospects.length} {isAdviser ? 'advisers' : 'prospects'}
           </p>
           <div className="flex gap-2 mt-3">
             <a
-              href={`/dashboard/campaigns/new?campaign=${campaign.id}`}
+              href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : `/dashboard/campaigns/new?campaign=${campaign.id}`}
               className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
             >
               + Find More
@@ -485,6 +669,18 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                     Phone
                   </span>
                 )}
+                {isAdviser && (
+                  prospect.fca_irn ? (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400">FCA</span>
+                  ) : (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-charcoal text-brand-beige">Not on register</span>
+                  )
+                )}
+                {isAdviser && (adviserData(prospect)?.risk_flags?.length || 0) > 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">
+                    {adviserData(prospect)!.risk_flags!.length} flag{adviserData(prospect)!.risk_flags!.length === 1 ? '' : 's'}
+                  </span>
+                )}
               </div>
             </button>
           ))}
@@ -499,7 +695,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             >
               <div>
                 <p className="text-brand-rose-gold text-xs font-semibold">
-                  {pendingProspects.length} prospects awaiting research
+                  {pendingProspects.length} {isAdviser ? 'advisers' : 'prospects'} awaiting research
                 </p>
                 <p className="text-brand-beige text-[10px] mt-0.5">Click to select and research</p>
               </div>
@@ -561,7 +757,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   >
                     {researching
                       ? `Researching ${researchProgress.completed}/${researchProgress.total}...`
-                      : `Research ${pendingSelected.size} Prospect${pendingSelected.size > 1 ? 's' : ''}`
+                      : `Research ${pendingSelected.size} ${isAdviser ? 'Adviser' : 'Prospect'}${pendingSelected.size > 1 ? 's' : ''}`
                     }
                   </button>
                 )}
@@ -578,25 +774,70 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
           <div className="mb-6">
             <div className="flex items-start justify-between">
               <div>
-                {selectedProfileUrl ? (
-                  <a
-                    href={selectedProfileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open LinkedIn profile"
-                    className="group inline-flex items-center gap-2 text-brand-cream text-2xl font-display hover:text-brand-rose-gold transition-colors"
-                  >
-                    <span className="group-hover:underline">{selectedName}</span>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#0A66C2" className="flex-shrink-0" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-                  </a>
-                ) : (
-                  <h1 className="text-brand-cream text-2xl font-display">{selectedName}</h1>
-                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {selectedProfileUrl ? (
+                    <a
+                      href={selectedProfileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open LinkedIn profile"
+                      className="group inline-flex items-center gap-2 text-brand-cream text-2xl font-display hover:text-brand-rose-gold transition-colors"
+                    >
+                      <span className="group-hover:underline">{selectedName}</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="#0A66C2" className="flex-shrink-0" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                    </a>
+                  ) : (
+                    <h1 className="text-brand-cream text-2xl font-display">{selectedName}</h1>
+                  )}
+                  {isAdviser && (
+                    selected.fca_irn ? (
+                      <a
+                        href={fcaIndividualUrl(selected.fca_irn)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded font-semibold hover:bg-green-900/60 transition-colors"
+                        title="Open on the FCA Register"
+                      >
+                        FCA Approved &middot; {selected.fca_irn} &rarr;
+                      </a>
+                    ) : (
+                      <span className="text-[10px] bg-brand-charcoal text-brand-beige px-1.5 py-0.5 rounded font-semibold">
+                        Not on register
+                      </span>
+                    )
+                  )}
+                </div>
                 <p className="text-brand-beige text-sm mt-1">
                   {selected.role}{selected.company ? ` at ${selected.company}` : ''}
                 </p>
                 {!hasSurname(selectedName) && (
                   <p className="text-brand-beige/70 text-xs mt-1">{SURNAME_MISSING_NOTE}</p>
+                )}
+                {isAdviser && WATCHLIST_ENABLED && (selected.fca_irn || selected.fca_frn) && (
+                  <div className="flex gap-2 mt-2">
+                    {selected.fca_irn && (
+                      watching.irns.includes(selected.fca_irn) ? (
+                        <a href="/dashboard/recruitment/watchlist" className="text-[10px] px-2.5 py-1.5 rounded border border-green-800 text-green-400">
+                          Watching adviser
+                        </a>
+                      ) : (
+                        <button onClick={() => watch('adviser')} disabled={watchBusy !== null} className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors">
+                          {watchBusy === 'adviser' ? 'Adding...' : 'Watch adviser'}
+                        </button>
+                      )
+                    )}
+                    {selected.fca_frn && (
+                      watching.frns.includes(selected.fca_frn) ? (
+                        <a href="/dashboard/recruitment/watchlist" className="text-[10px] px-2.5 py-1.5 rounded border border-green-800 text-green-400">
+                          Watching firm
+                        </a>
+                      ) : (
+                        <button onClick={() => watch('firm')} disabled={watchBusy !== null} className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors">
+                          {watchBusy === 'firm' ? 'Adding...' : `Watch firm${selected.fca_firm_name ? ` (${selected.fca_firm_name})` : ''}`}
+                        </button>
+                      )
+                    )}
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-3">
@@ -609,12 +850,23 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
 
             {/* Stats row */}
             <div className="grid grid-cols-4 gap-3 mt-4">
-              {[
-                { label: 'Location', value: selected.location || 'Unknown' },
-                { label: 'Est. Age', value: selected.est_age || 'Unknown' },
-                { label: 'Wealth Est.', value: selected.wealth_estimate || 'Unknown' },
-                { label: 'Sr. Level', value: selected.yrs_at_sr_level ? `${selected.yrs_at_sr_level} years` : 'Unknown' },
-              ].map((stat) => (
+              {(isAdviser
+                ? (() => {
+                    const d = adviserData(selected)
+                    return [
+                      { label: 'Location', value: selected.location || 'Unknown' },
+                      { label: 'Years Approved', value: d?.years_approved !== null && d?.years_approved !== undefined ? `${d.years_approved} years` : 'Unknown' },
+                      { label: 'At Current Firm', value: formatTenure(d?.tenure_months) },
+                      { label: 'Previous Moves', value: d ? String(d.moves_count) : 'Unknown' },
+                    ]
+                  })()
+                : [
+                    { label: 'Location', value: selected.location || 'Unknown' },
+                    { label: 'Est. Age', value: selected.est_age || 'Unknown' },
+                    { label: 'Wealth Est.', value: selected.wealth_estimate || 'Unknown' },
+                    { label: 'Sr. Level', value: selected.yrs_at_sr_level ? `${selected.yrs_at_sr_level} years` : 'Unknown' },
+                  ]
+              ).map((stat) => (
                 <div key={stat.label} className="bg-brand-charcoal-deep rounded-lg p-3 border border-brand-charcoal">
                   <p className="text-brand-beige text-[10px] uppercase tracking-wide">{stat.label}</p>
                   <p className="text-brand-cream text-sm font-semibold mt-0.5">{stat.value}</p>
@@ -684,15 +936,30 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             {/* Key trigger */}
             {selected.key_trigger && (
               <div className="bg-brand-charcoal-deep rounded-lg p-4 mt-4 border-l-4 border-brand-rose-gold">
-                <p className="text-brand-rose-gold text-[10px] uppercase tracking-wider font-bold mb-1">Key Trigger</p>
+                <p className="text-brand-rose-gold text-[10px] uppercase tracking-wider font-bold mb-1">{isAdviser ? 'Key Signal' : 'Key Trigger'}</p>
                 <p className="text-brand-cream text-sm">{selected.key_trigger}</p>
+              </div>
+            )}
+
+            {/* Adviser risk flags */}
+            {isAdviser && (adviserData(selected)?.risk_flags?.length || 0) > 0 && (
+              <div className="rounded-lg p-4 mt-3 border bg-amber-950/20 border-amber-700/40">
+                <p className="text-amber-300 text-[10px] uppercase tracking-wider font-bold mb-1.5">Risk Flags</p>
+                <ul className="space-y-1">
+                  {adviserData(selected)!.risk_flags!.map((flag, i) => (
+                    <li key={i} className="text-amber-100/90 text-xs flex gap-2"><span className="text-amber-400">&bull;</span>{flag}</li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>
 
           {/* Tabs */}
           <div className="flex gap-1 mb-6">
-            {(['outreach', 'reply-coach', 'research', 'scores'] as const).map((tab) => (
+            {(isAdviser
+              ? (['outreach', 'research', 'scores'] as const)
+              : (['outreach', 'reply-coach', 'research', 'scores'] as const)
+            ).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -702,7 +969,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                     : 'text-brand-beige hover:text-brand-cream'
                 }`}
               >
-                {tab === 'outreach' ? '3-Step Outreach' : tab === 'reply-coach' ? 'Reply Coach' : tab === 'research' ? 'Research Notes' : 'Score Breakdown'}
+                {tab === 'outreach' ? '3-Step Outreach' : tab === 'reply-coach' ? 'Reply Coach' : tab === 'research' ? (isAdviser ? 'Adviser Research' : 'Research Notes') : 'Score Breakdown'}
               </button>
             ))}
           </div>
@@ -715,7 +982,9 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   LINK Method&trade; Outreach Sequence
                 </h3>
                 <p className="text-brand-beige text-sm mb-6">
-                  Personalised 3-step sequence for {selectedName}. Copy each message and adjust as needed.
+                  {isAdviser
+                    ? `Peer to peer sequence for ${selectedName} in ${campaign.sender_name || 'the hiring principal'}'s voice. Copy each message and adjust as needed.`
+                    : `Personalised 3-step sequence for ${selectedName}. Copy each message and adjust as needed.`}
                 </p>
 
                 {[selected.outreach?.step1, selected.outreach?.step2, selected.outreach?.step3]
@@ -899,10 +1168,12 @@ Or: "Interesting, tell me more about how you work with people like me."`}
 
             {activeTab === 'research' && (
               <div>
-                <h3 className="text-brand-cream text-lg font-display mb-4">Research Intelligence</h3>
+                <h3 className="text-brand-cream text-lg font-display mb-4">{isAdviser ? 'Adviser Intelligence' : 'Research Intelligence'}</h3>
                 <div className="bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal">
-                  <p className="text-brand-cream text-sm leading-relaxed">{selected.research_notes}</p>
+                  <p className="text-brand-cream text-sm leading-relaxed">{(isAdviser && adviserData(selected)?.summary) || selected.research_notes}</p>
                 </div>
+
+                {isAdviser && <AdviserResearchPanel prospect={selected} />}
 
                 {/* Contact Methods */}
                 <div className="mt-6 bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal">
@@ -1034,14 +1305,17 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                 <h3 className="text-brand-cream text-lg font-display mb-6">Score Breakdown</h3>
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-4">
-                    {Object.entries(selected.scores || {}).map(([key, value]) => (
+                    {(isAdviser
+                      ? ADVISER_SCORE_ORDER.map((k) => [k, selected.scores?.[k] ?? 0] as [string, number])
+                      : Object.entries(selected.scores || {})
+                    ).map(([key, value]) => (
                       <ScoreBar
                         key={key}
-                        label={key.charAt(0).toUpperCase() + key.slice(1)}
+                        label={isAdviser ? (ADVISER_SCORE_LABELS[key] || key) : key.charAt(0).toUpperCase() + key.slice(1)}
                         value={value as number}
                         color={
-                          key === 'wealth' ? '#c49f8c' :
-                          key === 'timing' ? '#22c55e' :
+                          key === 'wealth' || key === 'quality' ? '#c49f8c' :
+                          key === 'timing' || key === 'move_likelihood' ? '#22c55e' :
                           key === 'accessibility' ? '#a855f7' :
                           '#3b82f6'
                         }
@@ -1067,6 +1341,108 @@ Or: "Interesting, tell me more about how you work with people like me."`}
 }
 
 /* ── Sub-components ─────────────────────────── */
+
+function AdviserResearchPanel({ prospect }: { prospect: Prospect }) {
+  const d = adviserData(prospect)
+  if (!d) return null
+  const fs = d.firm_signals
+  const listBlock = (title: string, items: string[] | undefined) => (items && items.length > 0 ? (
+    <div className="bg-brand-charcoal-deep rounded-lg p-4 border border-brand-charcoal">
+      <p className="text-brand-rose-gold text-[10px] uppercase tracking-wider font-bold mb-2">{title}</p>
+      <ul className="space-y-1.5">
+        {items.map((item, i) => (
+          <li key={i} className="text-brand-cream text-sm flex gap-2"><span className="text-brand-rose-gold">&bull;</span>{item}</li>
+        ))}
+      </ul>
+    </div>
+  ) : null)
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        {listBlock('Key signals (internal)', d.key_signals)}
+        {listBlock('Talking points', d.talking_points)}
+      </div>
+
+      {/* Register career */}
+      <div className="bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-brand-rose-gold text-xs uppercase tracking-wider font-bold">Register History</h4>
+          {prospect.fca_irn && (
+            <a href={fcaIndividualUrl(prospect.fca_irn)} target="_blank" rel="noopener noreferrer" className="text-green-400 text-xs font-semibold hover:underline">
+              Open on FCA Register &rarr;
+            </a>
+          )}
+        </div>
+        {!d.verified ? (
+          <p className="text-brand-beige text-sm">Not on register. No matching approved person was found for this name. Check before approaching.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">Status</p><p className="text-brand-cream mt-0.5">{prospect.fca_status || 'Unknown'}</p></div>
+              <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">First approved</p><p className="text-brand-cream mt-0.5">{formatMonthYear(d.first_approved)}</p></div>
+              <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">Disciplinary history</p><p className={`mt-0.5 ${d.disciplinary ? 'text-amber-300 font-semibold' : 'text-brand-cream'}`}>{d.disciplinary ? 'Yes, see register' : 'None found'}</p></div>
+            </div>
+            {d.current_functions.length > 0 && (
+              <div>
+                <p className="text-brand-beige uppercase tracking-wide text-[10px] mb-1">Current functions</p>
+                <ul className="space-y-1">
+                  {d.current_functions.map((f, i) => (
+                    <li key={i} className="text-brand-cream text-xs flex flex-wrap gap-x-2">
+                      <span className={f.customer_facing ? 'text-green-400' : ''}>{f.name}</span>
+                      <span className="text-brand-beige">{f.firm_name}{f.effective_from ? `, from ${formatMonthYear(f.effective_from)}` : ''}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {d.previous_firms.length > 0 && (
+              <div>
+                <p className="text-brand-beige uppercase tracking-wide text-[10px] mb-1">Previous firms</p>
+                <ul className="space-y-1">
+                  {d.previous_firms.map((f, i) => (
+                    <li key={i} className="text-brand-cream text-xs">
+                      {f.name} <span className="text-brand-beige">{formatMonthYear(f.from)} to {formatMonthYear(f.to)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {d.workplaces.length > 0 && (
+              <p className="text-brand-beige text-xs">Workplace: {d.workplaces.map((w) => `${w.firm_name}${w.location ? `, ${w.location}` : ''}`).join('; ')}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Firm signals */}
+      {fs && (
+        <div className="bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-brand-rose-gold text-xs uppercase tracking-wider font-bold">Firm Signals</h4>
+            <a href={fcaFirmUrl(fs.frn)} target="_blank" rel="noopener noreferrer" className="text-green-400 text-xs font-semibold hover:underline">
+              {fs.name} &middot; FRN {fs.frn} &rarr;
+            </a>
+          </div>
+          <div className="grid grid-cols-4 gap-3 text-xs">
+            <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">Status</p><p className="text-brand-cream mt-0.5">{fs.status}</p></div>
+            <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">Individuals</p><p className="text-brand-cream mt-0.5">{fs.individual_count ?? 'Unknown'}</p></div>
+            <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">Appointed reps</p><p className="text-brand-cream mt-0.5">{fs.ar_count ?? 'Unknown'}{fs.ar_count_is_minimum ? '+' : ''}</p></div>
+            <div><p className="text-brand-beige uppercase tracking-wide text-[10px]">Restrictions</p><p className={`mt-0.5 ${(fs.restriction_count ?? fs.requirement_count) > 0 ? 'text-amber-300' : 'text-brand-cream'}`}>{fs.restriction_count ?? fs.requirement_count}<span className="text-brand-beige"> of {fs.requirement_count} requirements</span></p></div>
+          </div>
+          {fs.requirements.length > 0 && (
+            <ul className="mt-3 space-y-1">
+              {fs.requirements.map((r, i) => <li key={i} className="text-brand-beige text-[11px]">{r}</li>)}
+            </ul>
+          )}
+          <p className="text-brand-charcoal text-[10px] mt-3">
+            Checked {new Date(fs.fetched_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}. Used for scoring only, never quoted in outreach.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function TierBadge({ tier }: { tier: string }) {
   const styles = {

@@ -22,10 +22,12 @@ export default async function CampaignsListPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
+  // Client prospecting campaigns only. Recruitment campaigns live under /dashboard/recruitment.
   const { data: campaigns } = await supabase
     .from('campaigns')
     .select('id, name, niche, audience_mode, source, custom_instructions, created_at, updated_at, prospects(tier, status)')
     .eq('user_id', user.id)
+    .eq('purpose', 'clients')
     .order('updated_at', { ascending: false })
 
   const rows = (campaigns || []) as CampaignRow[]

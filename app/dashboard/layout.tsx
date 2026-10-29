@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { PLAN_LIMITS, PlanTier } from '@/types'
 import { isAdmin, researchAccess, effectiveUsage, accessMessage } from '@/lib/access'
+import { recruitmentAccess } from '@/lib/recruitment/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,16 +25,34 @@ export default async function DashboardLayout({
 
   if (!profile) redirect('/auth/login')
 
+  // v76.1: unread recruitment alerts for the nav badge
+  const { count: unreadAlerts } = await supabase
+    .from('alerts')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .is('read_at', null)
+
   const limits = PLAN_LIMITS[(profile.plan_tier as PlanTier)] || PLAN_LIMITS.free
   // v75.7: a cycle that has passed counts as reset, matching the database.
   const used = effectiveUsage(profile)
-  const usagePercent = Math.min(100, Math.round((used / Math.max(limits.prospects_per_cycle, 1)) * 100))
   const admin = isAdmin(user.email)
   // v75.7: explain why research is blocked, before the user hits an error.
   const blockedReason = admin ? 'ok' : researchAccess(profile)
-  const blockedMessage = blockedReason === 'ok'
+  // v76: someone who only buys Recruitment has no client plan, or an ended
+  // client trial. That is expected, so don't nag them about it. A client
+  // plan they do hold (out of researches, card failed) still shows.
+  const recruitmentOnly = !admin && recruitmentAccess(profile) === 'ok'
+    && ['no_plan', 'trial_ended', 'canceled'].includes(blockedReason)
+  const blockedMessage = blockedReason === 'ok' || recruitmentOnly
     ? null
     : accessMessage(blockedReason, { limit: limits.prospects_per_cycle, resetsAt: profile.cycle_reset_at })
+  // The sidebar meter follows whichever product the user is on.
+  const recruitmentUsed = profile.recruitment_usage_reset_at && new Date(profile.recruitment_usage_reset_at).getTime() > Date.now()
+    ? profile.recruitment_advisers_used || 0
+    : 0
+  const meter = recruitmentOnly
+    ? { label: 'Adviser researches', used: recruitmentUsed, limit: PLAN_LIMITS.recruitment.advisers_per_cycle, plan: 'Recruitment plan' }
+    : { label: 'Prospects used', used, limit: limits.prospects_per_cycle, plan: planLabel(profile.plan_tier, profile.trial_ends_at) }
 
   return (
     <div className="flex h-screen">
@@ -51,6 +70,9 @@ export default async function DashboardLayout({
         <nav className="flex-1 p-4 space-y-1">
           <NavLink href="/dashboard" label="Dashboard" />
           <NavLink href="/dashboard/campaigns" label="Campaigns" />
+          <NavLink href="/dashboard/recruitment" label="Recruitment" badge={unreadAlerts || 0} />
+          <NavLink href="/dashboard/recruitment/watchlist" label="Watchlist" sub />
+          <NavLink href="/dashboard/recruitment/alerts" label="Alerts" sub />
           <NavLink href="/dashboard/settings" label="Settings" />
           {admin && (
             <NavLink href="/dashboard/admin" label="Admin" />
@@ -60,19 +82,19 @@ export default async function DashboardLayout({
         {/* Usage meter */}
         <div className="p-4 border-t border-brand-charcoal">
           <div className="flex justify-between text-xs mb-2">
-            <span className="text-brand-beige">Prospects used</span>
+            <span className="text-brand-beige">{meter.label}</span>
             <span className="text-brand-cream font-semibold">
-              {used}/{limits.prospects_per_cycle}
+              {meter.used}/{meter.limit}
             </span>
           </div>
           <div className="h-1.5 bg-brand-charcoal rounded-full overflow-hidden">
             <div
               className="h-full bg-brand-rose-gold rounded-full transition-all duration-500"
-              style={{ width: `${usagePercent}%` }}
+              style={{ width: `${Math.min(100, Math.round((meter.used / Math.max(meter.limit, 1)) * 100))}%` }}
             />
           </div>
           <p className="text-[10px] text-brand-beige mt-2 uppercase tracking-wide">
-            {planLabel(profile.plan_tier, profile.trial_ends_at)}
+            {meter.plan}
           </p>
         </div>
 
@@ -123,13 +145,20 @@ function planLabel(tier: string, trialEndsAt: string | null): string {
   return `${tier} plan`
 }
 
-function NavLink({ href, label }: { href: string; label: string }) {
+function NavLink({ href, label, badge = 0, sub = false }: { href: string; label: string; badge?: number; sub?: boolean }) {
   return (
     <Link
       href={href}
-      className="block px-3 py-2 rounded-lg text-sm text-brand-beige hover:text-brand-cream hover:bg-brand-charcoal-deep transition-colors"
+      className={`flex items-center justify-between rounded-lg transition-colors hover:text-brand-cream hover:bg-brand-charcoal-deep ${
+        sub ? 'pl-6 pr-3 py-1.5 text-xs text-brand-beige/80' : 'px-3 py-2 text-sm text-brand-beige'
+      }`}
     >
-      {label}
+      <span>{label}</span>
+      {badge > 0 && (
+        <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-brand-rose-gold text-brand-dark text-[10px] font-bold flex items-center justify-center" title={`${badge} unread alert${badge === 1 ? '' : 's'}`}>
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </Link>
   )
 }

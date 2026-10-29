@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { PLANS } from '@/types'
+import { PLANS, RECRUITMENT_PLAN, ADVISER_TYPES, PERMISSION_OPTIONS, PLAN_LIMITS } from '@/types'
+import { recruitmentAccess } from '@/lib/recruitment/access-rules'
 
 export default function SettingsPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -22,6 +23,18 @@ export default function SettingsPage() {
   const [aboutText, setAboutText] = useState('')
   const [importing, setImporting] = useState(false)
   const [importExpanded, setImportExpanded] = useState(false)
+
+  // v76: Recruitment profile (account level)
+  const [recFirmName, setRecFirmName] = useState('')
+  const [recProposition, setRecProposition] = useState('')
+  const [recRoles, setRecRoles] = useState('')
+  const [recAdviserTypes, setRecAdviserTypes] = useState<string[]>([])
+  const [recLocations, setRecLocations] = useState('')
+  const [recMinYears, setRecMinYears] = useState('')
+  const [recPermissions, setRecPermissions] = useState<string[]>([])
+  const [recNotes, setRecNotes] = useState('')
+  const [savingRecruitment, setSavingRecruitment] = useState(false)
+  const [recruitmentCheckout, setRecruitmentCheckout] = useState<'monthly' | 'annual' | null>(null)
 
   const supabase = createClient()
 
@@ -51,8 +64,66 @@ export default function SettingsPage() {
       setServiceOutcomes(sp.key_outcomes || '')
       setServiceThreshold(sp.minimum_threshold || '')
       setServiceGeo(sp.geographic_focus || '')
+      const rp = data.recruitment_profile || {}
+      setRecFirmName(rp.firm_name || '')
+      setRecProposition(rp.proposition || '')
+      setRecRoles(Array.isArray(rp.roles_needed) ? rp.roles_needed.join(', ') : '')
+      setRecAdviserTypes(Array.isArray(rp.adviser_types) ? rp.adviser_types : [])
+      setRecLocations(Array.isArray(rp.target_locations) ? rp.target_locations.join(', ') : '')
+      setRecMinYears(typeof rp.min_years_approved === 'number' ? String(rp.min_years_approved) : '')
+      setRecPermissions(Array.isArray(rp.permissions_required) ? rp.permissions_required : [])
+      setRecNotes(rp.notes || '')
     }
     setLoading(false)
+  }
+
+  function toggleIn(list: string[], value: string, setter: (v: string[]) => void) {
+    setter(list.includes(value) ? list.filter((x) => x !== value) : [...list, value])
+  }
+
+  async function handleSaveRecruitment(e: React.FormEvent) {
+    e.preventDefault()
+    setSavingRecruitment(true)
+    const split = (v: string) => v.split(',').map((x) => x.trim()).filter(Boolean)
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        recruitment_profile: {
+          firm_name: recFirmName.trim() || null,
+          proposition: recProposition.trim() || null,
+          roles_needed: split(recRoles),
+          adviser_types: recAdviserTypes,
+          target_locations: split(recLocations),
+          min_years_approved: recMinYears.trim() ? Number(recMinYears) : null,
+          permissions_required: recPermissions,
+          notes: recNotes.trim() || null,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', profile.id)
+    if (error) toast.error('Failed to save recruitment profile')
+    else toast.success('Recruitment profile saved')
+    setSavingRecruitment(false)
+  }
+
+  async function handleRecruitmentCheckout(period: 'monthly' | 'annual') {
+    setRecruitmentCheckout(period)
+    try {
+      const res = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier: 'recruitment', period }),
+      })
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+        return
+      }
+      toast.error(data.error || 'Failed to start checkout')
+    } catch {
+      toast.error('Something went wrong')
+    }
+    setRecruitmentCheckout(null)
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -353,6 +424,69 @@ export default function SettingsPage() {
           </button>
         </form>
       </div>
+      {/* v76: Recruitment profile (account level) */}
+      <div id="recruitment" className="bg-brand-charcoal-deep rounded-xl border border-brand-charcoal p-6 mb-8 scroll-mt-8">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-brand-cream font-display text-lg">Recruitment Profile</h2>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-900/40 text-purple-300 uppercase tracking-wide font-bold">Recruitment</span>
+        </div>
+        <p className="text-brand-beige text-sm mb-5">
+          Used when you hire advisers. Tells the AI what your firm offers and who you want, for scoring fit and writing outreach in your voice. Each recruitment campaign can override it.
+        </p>
+        <form onSubmit={handleSaveRecruitment} className="space-y-4">
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">Hiring firm</label>
+            <input type="text" value={recFirmName} onChange={(e) => setRecFirmName(e.target.value)} placeholder="e.g. Northgate Mortgages" className="w-full" />
+          </div>
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">What you offer advisers</label>
+            <textarea value={recProposition} onChange={(e) => setRecProposition(e.target.value)} placeholder="e.g. Directly authorised, full admin and case management, lead flow from three estate agency partners, flexible working" className="w-full h-20 resize-none" />
+            <p className="text-brand-beige text-xs mt-1">Only what you write here is used in outreach. Figures such as payout rates are only quoted if you include them.</p>
+          </div>
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">Roles needed <span className="text-brand-beige text-xs font-normal">(comma separated)</span></label>
+            <input type="text" value={recRoles} onChange={(e) => setRecRoles(e.target.value)} placeholder="e.g. Mortgage adviser, Protection adviser" className="w-full" />
+          </div>
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">Adviser types</label>
+            <div className="flex flex-wrap gap-2">
+              {ADVISER_TYPES.map((t) => (
+                <button key={t} type="button" onClick={() => toggleIn(recAdviserTypes, t, setRecAdviserTypes)} className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${recAdviserTypes.includes(t) ? 'border-brand-rose-gold text-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal text-brand-beige hover:border-brand-rose-gold'}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-brand-cream text-sm font-medium mb-1.5">Target locations <span className="text-brand-beige text-xs font-normal">(comma separated)</span></label>
+              <input type="text" value={recLocations} onChange={(e) => setRecLocations(e.target.value)} placeholder="e.g. Leeds, Sheffield, York" className="w-full" />
+            </div>
+            <div>
+              <label className="block text-brand-cream text-sm font-medium mb-1.5">Minimum years approved</label>
+              <input type="number" min={0} max={40} value={recMinYears} onChange={(e) => setRecMinYears(e.target.value)} placeholder="e.g. 2" className="w-full" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">Permissions required</label>
+            <div className="flex flex-wrap gap-2">
+              {PERMISSION_OPTIONS.map((perm) => (
+                <button key={perm} type="button" onClick={() => toggleIn(recPermissions, perm, setRecPermissions)} className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${recPermissions.includes(perm) ? 'border-brand-rose-gold text-brand-rose-gold bg-brand-rose-gold/10' : 'border-brand-charcoal text-brand-beige hover:border-brand-rose-gold'}`}>
+                  {perm}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">Notes</label>
+            <textarea value={recNotes} onChange={(e) => setRecNotes(e.target.value)} placeholder="Anything else the AI should know about your firm or the hire" className="w-full h-16 resize-none" />
+          </div>
+          <button type="submit" className="btn-primary text-sm" disabled={savingRecruitment}>
+            {savingRecruitment ? 'Saving...' : 'Save Recruitment Profile'}
+          </button>
+        </form>
+      </div>
+
       <div className="bg-brand-charcoal-deep rounded-xl border border-brand-charcoal p-6">
         <h2 className="text-brand-cream font-display text-lg mb-2">Billing</h2>
         <p className="text-brand-beige text-sm mb-6">
@@ -377,7 +511,7 @@ export default function SettingsPage() {
                 <h3 className="text-brand-cream font-display text-lg">{plan.name}</h3>
                 <p className="text-brand-cream text-2xl font-display mt-1">
                   &pound;{plan.monthlyPrice}
-                  <span className="text-brand-beige text-sm font-body">/mo + VAT</span>
+                  <span className="text-brand-beige text-sm font-body">/mo inc. VAT</span>
                 </p>
                 <ul className="mt-4 space-y-2">
                   {plan.features.map((f) => (
@@ -403,6 +537,64 @@ export default function SettingsPage() {
             )
           })}
         </div>
+
+        {/* v76: Recruitment is a separate subscription */}
+        {(() => {
+          const rs = profile?.recruitment_status || 'inactive'
+          const access = recruitmentAccess(profile)
+          const isActive = access === 'ok'
+          const periodEnd = profile?.recruitment_current_period_end
+            ? new Date(profile.recruitment_current_period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+            : null
+          const statusLabel = isActive ? 'Active' : access === 'recruitment_expired' ? 'Beta ended' : rs === 'past_due' ? 'Payment failed' : rs === 'cancelled' ? 'Cancelled' : 'Not active'
+          return (
+            <div className={`mt-6 rounded-xl border p-5 ${isActive ? 'border-purple-700 bg-purple-950/10' : 'border-brand-charcoal'}`}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-brand-cream font-display text-lg">{RECRUITMENT_PLAN.name}</h3>
+                    <span className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wide font-bold ${isActive ? 'bg-purple-900/50 text-purple-300' : rs === 'past_due' ? 'bg-orange-900/40 text-orange-400' : 'bg-brand-charcoal text-brand-beige'}`}>
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <p className="text-brand-cream text-2xl font-display mt-1">
+                    &pound;{RECRUITMENT_PLAN.monthlyPrice}
+                    <span className="text-brand-beige text-sm font-body">/mo inc. VAT</span>
+                    <span className="text-brand-beige text-xs font-body ml-2">or &pound;{RECRUITMENT_PLAN.annualPrice.toLocaleString('en-GB')}/yr</span>
+                  </p>
+                  <p className="text-brand-beige text-xs mt-1">
+                    For hiring advisers. Billed separately from the plans above.
+                    {isActive && profile?.recruitment_period ? ` Billed ${profile.recruitment_period}.` : ''}
+                    {isActive && periodEnd ? ` Current period ends ${periodEnd}.` : ''}
+                  </p>
+                  {isActive && (
+                    <p className="text-brand-beige text-xs mt-1">
+                      {profile?.recruitment_usage_reset_at && new Date(profile.recruitment_usage_reset_at).getTime() > Date.now() ? profile?.recruitment_advisers_used || 0 : 0} of {PLAN_LIMITS.recruitment.advisers_per_cycle} adviser researches used this cycle.
+                    </p>
+                  )}
+                </div>
+                {!isActive && (
+                  <div className="flex flex-col gap-2 flex-shrink-0">
+                    <button onClick={() => handleRecruitmentCheckout('monthly')} disabled={recruitmentCheckout !== null} className="btn-secondary text-xs whitespace-nowrap">
+                      {recruitmentCheckout === 'monthly' ? 'Opening...' : 'Start monthly'}
+                    </button>
+                    <button onClick={() => handleRecruitmentCheckout('annual')} disabled={recruitmentCheckout !== null} className="btn-secondary text-xs whitespace-nowrap">
+                      {recruitmentCheckout === 'annual' ? 'Opening...' : 'Start annual'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <ul className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {RECRUITMENT_PLAN.features.map((f) => (
+                  <li key={f} className="text-brand-beige text-xs flex items-start gap-2">
+                    <span className="text-brand-rose-gold mt-0.5">&#10003;</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        })()}
       </div>
     </div>
   )

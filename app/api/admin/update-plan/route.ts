@@ -9,6 +9,9 @@ const Schema = z.object({
   plan_tier: z.enum(['free', 'trial', 'starter', 'professional', 'growth']).optional(),
   days: z.number().min(1).max(365).optional().default(30),
   reset_usage: z.boolean().optional(),
+  // v76: Recruitment on/off (beta onboarding) and usage reset. Separate from the plan.
+  recruitment: z.boolean().optional(),
+  reset_recruitment_usage: z.boolean().optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -26,7 +29,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input' }, { status: 400 })
   }
 
-  const { user_id, plan_tier, days, reset_usage } = parsed.data
+  const { user_id, plan_tier, days, reset_usage, recruitment, reset_recruitment_usage } = parsed.data
 
   const updates: Record<string, unknown> = {}
 
@@ -45,6 +48,44 @@ export async function POST(req: NextRequest) {
   if (reset_usage) {
     updates.prospects_used_this_cycle = 0
     updates.cycle_reset_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  }
+
+  // Beta access: no Stripe subscription, ends after `days`. Clearing a stale
+  // subscription id matters, because access with a subscription id never
+  // expires on its own. Usage still runs in 30-day cycles.
+  // A user with a live Stripe subscription is managed by Stripe. Switching
+  // them on as beta would drop the subscription id while Stripe keeps
+  // billing, and switching them off would be undone by the next Stripe event.
+  if (recruitment !== undefined) {
+    const { data: target } = await admin
+      .from('profiles')
+      .select('recruitment_status, recruitment_subscription_id')
+      .eq('id', user_id)
+      .single()
+    if (target?.recruitment_subscription_id && ['active', 'past_due'].includes(target.recruitment_status)) {
+      return NextResponse.json(
+        { error: 'This user has a Recruitment subscription in Stripe. Manage it in Stripe instead.' },
+        { status: 409 }
+      )
+    }
+  }
+
+  if (recruitment === true) {
+    updates.recruitment_status = 'active'
+    updates.recruitment_subscription_id = null
+    updates.recruitment_period = null
+    updates.recruitment_current_period_end = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+    updates.recruitment_advisers_used = 0
+    updates.recruitment_finds_used = 0
+    updates.recruitment_usage_reset_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  } else if (recruitment === false) {
+    updates.recruitment_status = 'inactive'
+  }
+
+  if (reset_recruitment_usage) {
+    updates.recruitment_advisers_used = 0
+    updates.recruitment_finds_used = 0
+    updates.recruitment_usage_reset_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
   }
 
   if (Object.keys(updates).length === 0) {
