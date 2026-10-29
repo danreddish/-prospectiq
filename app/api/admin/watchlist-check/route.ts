@@ -5,7 +5,7 @@ import { runWatchlistCheck } from '@/lib/recruitment/watchlist-check'
 
 export const dynamic = 'force-dynamic'
 
-// Admin-only manual run of the watchlist check. Same logic as the hourly
+// Admin-only manual run of the watchlist check. Same logic as the scheduled
 // scheduled function, which only runs on production deploys.
 async function handle() {
   const supabase = createClient()

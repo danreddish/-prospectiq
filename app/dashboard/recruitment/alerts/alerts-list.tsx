@@ -74,7 +74,7 @@ export default function AlertsList({ initialAlerts }: { initialAlerts: AlertRow[
       <div className="bg-brand-charcoal-deep rounded-xl border border-brand-charcoal overflow-hidden">
         {alerts.length === 0 ? (
           <div className="p-12 text-center text-brand-beige text-sm">
-            No alerts yet. Watched advisers and firms are checked in rotation, a batch every hour. The first check sets a baseline, so alerts start from the second.
+            No alerts yet. Watched advisers and firms are checked in rotation, a batch every 15 minutes. The first check sets a baseline, so alerts start from the second.
           </div>
         ) : (
           <div className="divide-y divide-brand-charcoal">

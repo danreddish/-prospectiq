@@ -144,7 +144,7 @@ export default function WatchlistManager({ initialItems, unreadByItem, prospects
           <p className="text-brand-rose-gold text-[10px] font-bold tracking-[2px] uppercase mb-1">Recruitment</p>
           <h1 className="text-2xl font-display text-brand-cream">Watchlist</h1>
           <p className="text-brand-beige text-sm mt-1">
-            Advisers and firms are checked against the FCA Register in rotation, a batch every hour. Changes raise an alert.
+            Advisers and firms are checked against the FCA Register in rotation, a batch every 15 minutes. Changes raise an alert.
           </p>
         </div>
         <div className="text-right">
