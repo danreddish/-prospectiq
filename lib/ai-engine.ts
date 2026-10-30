@@ -303,7 +303,9 @@ Return this exact JSON structure:
 //   msg_1 Engage in dialogue   (24 hours after they accept)
 //   msg_2 Build relationship   (5 to 7 days later)
 //   msg_3 Build relationship   (5 to 7 days later)
-//   msg_4 Move it forward      (5 to 7 days later): offers a short audit
+//   msg_4 Exit                 (5 to 7 days later): a gracious close. Any
+//                              final offer (e.g. Dan's audit) comes from the
+//                              campaign's own instructions, not the app.
 // At about 80 tokens a second, four messages in one call take around seven
 // seconds, too close to the 10 second limit. So they are written in two
 // requests: part 1 writes msg_1 and msg_2, part 2 writes msg_3 and msg_4
@@ -312,7 +314,7 @@ Return this exact JSON structure:
 const HEYREACH_MESSAGE_BRIEF = `msg_1 (Engage in dialogue, sent 24 hours after they accept, max 300 chars): thank them for connecting, using their first name. Stay curious and human. Ask ONE light question about their firm or role that invites a reply. NO pitch, NO mention of the sender's services, NO call ask.
 msg_2 (Build the relationship, 5-7 days later, max 600 chars): give something genuinely useful: an insight, observation or trend relevant to THEIR firm, role or clients. Reference their context. NO pitch, NO service mention, NO ask.
 msg_3 (Build the relationship, 5-7 days later, max 600 chars): a second, different piece of value that builds on msg_2. You may say in one line what the sender works on, kept directional (e.g. "helping owner-run firms win more of the right clients"), never figures. NO ask.
-msg_4 (Move it forward, 5-7 days later, max 500 chars): offer the prospect a short audit as a no-pressure next step: a prospecting audit, a marketing audit or a market audit, whichever fits them best. Say briefly what it would look at, tied to something from msg_2 or msg_3. ONE clear offer they can accept by replying. Do NOT ask for a call, suggest times, or include a calendar link. No promised results.`
+msg_4 (Exit, 5-7 days later, max 400 chars): a short, gracious close. Acknowledge they are busy, say you won't keep messaging, and leave the door open for them to get in touch if it ever becomes relevant. No new pitch, no call ask, no guilt, no "just bumping this". If the campaign instructions say what to offer in the final message, include it as one light, optional offer they can take up by replying. Never suggest times or include a calendar link. No promised results.`
 
 const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
 - The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.

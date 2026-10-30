@@ -16,7 +16,7 @@ export const HEYREACH_MESSAGE_LABELS: Record<HeyReachMessageField, string> = {
   msg_1: 'Welcome (24 hours after they accept)',
   msg_2: 'Value (5 to 7 days later)',
   msg_3: 'Value (5 to 7 days later)',
-  msg_4: 'Audit offer (5 to 7 days later)',
+  msg_4: 'Exit (5 to 7 days later)',
 }
 
 /** Suggested lengths. Over these is flagged, not blocked. */
@@ -24,7 +24,7 @@ export const HEYREACH_MESSAGE_SOFT_LIMITS: Record<HeyReachMessageField, number> 
   msg_1: 300,
   msg_2: 600,
   msg_3: 600,
-  msg_4: 500,
+  msg_4: 400,
 }
 
 export type HeyReachStatus = 'draft' | 'approved' | 'rejected' | 'pushing' | 'pushed' | 'push_failed'
