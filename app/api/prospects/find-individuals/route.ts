@@ -4,8 +4,12 @@ import { createClient } from '@/lib/supabase/server'
 import {
   searchCompanies,
   getCompanyOfficers,
+  getCompanyFinancials,
   isDirector,
   estimateAge,
+  requiredNameWords,
+  nameHasWholeWords,
+  isDormantAccounts,
 } from '@/lib/data-sources/companies-house'
 import {
   searchFirms,
@@ -137,10 +141,17 @@ async function findCHDirectors(
   targetLocations: string[],
   maxIndividuals: number
 ) {
-  const companies = await searchCompanies(searchTerm, 10)
-  const activeCompanies = companies.filter((c) => c.companyStatus === 'active')
+  // v76.2: Companies House matches the start of words ("IFA" finds IFARM),
+  // so ask for more results and keep only whole-word name matches.
+  const companies = await searchCompanies(searchTerm, 50)
+  const required = requiredNameWords(searchTerm, targetLocations)
+  const activeCompanies = companies.filter(
+    (c) => c.companyStatus === 'active' && nameHasWholeWords(c.title, required)
+  )
 
   const prospects: Record<string, unknown>[] = []
+  let dormantSkipped = 0
+  let companiesUsed = 0
 
   for (const company of activeCompanies) {
     if (prospects.length >= maxIndividuals) break
@@ -153,7 +164,17 @@ async function findCHDirectors(
     }
 
     try {
-      const officers = await getCompanyOfficers(company.companyNumber)
+      // v76.2: a dormant company still shows as "active", so check its
+      // accounts at the same time as fetching its officers.
+      const [financials, officers] = await Promise.all([
+        getCompanyFinancials(company.companyNumber).catch(() => null),
+        getCompanyOfficers(company.companyNumber),
+      ])
+      if (isDormantAccounts(financials?.accountsCategory)) {
+        dormantSkipped++
+        continue
+      }
+      companiesUsed++
       const directors = officers.filter((o) => isDirector(o.officerRole))
 
       for (const director of directors) {
@@ -182,6 +203,10 @@ async function findCHDirectors(
       }
     } catch { continue }
   }
+
+  console.log(
+    `[Find CH] "${searchTerm}": ${companies.length} results, ${activeCompanies.length} active with whole-word name match (needs: ${required.join(', ') || 'any'}), ${dormantSkipped} dormant skipped, ${prospects.length} directors from ${companiesUsed} companies`
+  )
 
   return NextResponse.json({
     individuals: prospects,

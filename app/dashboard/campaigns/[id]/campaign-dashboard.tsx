@@ -13,6 +13,7 @@ import {
 import { cleanPersonName, hasSurname, SURNAME_MISSING_NOTE } from '@/lib/names'
 import { researchAdvisersSequentially } from '@/lib/recruitment/research-client'
 import { fcaIndividualUrl, fcaFirmUrl } from '@/lib/recruitment/links'
+import { writeOutreachFor, writeOutreachForResults, outreachFailedNote } from '@/lib/outreach-client'
 
 interface Props {
   campaign: Campaign
@@ -82,6 +83,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const [activeTab, setActiveTab] = useState<'outreach' | 'research' | 'scores' | 'reply-coach'>('outreach')
   const [tierFilter, setTierFilter] = useState<'all' | 'A' | 'B' | 'C'>('all')
   const [copiedStep, setCopiedStep] = useState<number | null>(null)
+  const [writingOutreach, setWritingOutreach] = useState(false) // v76.2
   const [showPending, setShowPending] = useState(false)
   const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set())
   const [researching, setResearching] = useState(false)
@@ -129,6 +131,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     let completed = 0
     let failed = 0
     let planStop = '' // v75.7
+    let outreachFailed = 0 // v76.2
     setResearchProgress({ completed: 0, total })
 
     if (isAdviser) {
@@ -171,6 +174,9 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
           break
         }
         if (!res.ok) throw new Error(data.error || 'Research failed')
+        // v76.2: second request writes the outreach for what was researched.
+        const outreachResult = await writeOutreachForResults(campaign.id, data.results)
+        outreachFailed += outreachResult.failed
         completed += data.completed || 0
         failed += data.failed || 0
       } catch {
@@ -188,11 +194,29 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
         toast.error(planStop, { duration: 10000 })
       }
     } else if (completed > 0) {
-      toast.success(`Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}`)
+      toast.success(
+        `Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}.${outreachFailedNote(outreachFailed)}`,
+        outreachFailed > 0 ? { duration: 10000 } : undefined
+      )
       // Reload the page to show updated data
       window.location.reload()
     } else {
       toast.error('All research requests failed. Check your Anthropic API key and try again.')
+    }
+  }
+
+  // v76.2: research is saved before the outreach is written. If writing it
+  // failed, this lets the user try again from the prospect page.
+  async function handleWriteOutreach() {
+    if (!selected) return
+    setWritingOutreach(true)
+    const ok = await writeOutreachFor(campaign.id, selected.id)
+    setWritingOutreach(false)
+    if (ok) {
+      toast.success('Outreach written')
+      window.location.reload()
+    } else {
+      toast.error('Could not write the outreach just now. Please try again in a moment.')
     }
   }
 
@@ -998,6 +1022,25 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                       onCopy={() => copyMessage(step!.message, i + 1)}
                     />
                   ))}
+
+                {!isAdviser &&
+                  selected.status === 'completed' &&
+                  !selected.outreach?.step1 &&
+                  !selected.outreach?.step2 &&
+                  !selected.outreach?.step3 && (
+                    <div className="rounded-xl border border-white/10 p-5 text-center">
+                      <p className="text-brand-beige text-sm mb-4">
+                        The research is saved, but the outreach for {selectedName} hasn&apos;t been written yet.
+                      </p>
+                      <button
+                        onClick={handleWriteOutreach}
+                        disabled={writingOutreach}
+                        className="btn-primary text-sm disabled:opacity-50"
+                      >
+                        {writingOutreach ? 'Writing...' : 'Write outreach'}
+                      </button>
+                    </div>
+                  )}
               </div>
             )}
 

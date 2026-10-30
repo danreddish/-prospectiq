@@ -14,6 +14,7 @@ import {
 } from '@/lib/linkedin'
 import { cleanPersonName, hasSurname, SURNAME_MISSING_NOTE } from '@/lib/names'
 import type { CampaignSource } from '@/types'
+import { writeOutreachForResults, outreachFailedNote } from '@/lib/outreach-client'
 
 interface FoundProspect {
   name: string
@@ -411,6 +412,7 @@ export default function CampaignsPage() {
     let failed = 0
     let lastError = ''
     let planStop = '' // v75.7: set when the plan blocks further research
+    let outreachFailed = 0 // v76.2: research saved, outreach still to write
     setResearchProgress({ completed: 0, total })
 
     // Process in batches of 5 (Netlify function timeout limit)
@@ -442,6 +444,11 @@ export default function CampaignsPage() {
           break
         }
         if (!res.ok) throw new Error(data.error || 'Research failed')
+        if (!data.completed && data.results?.[0]?.error) lastError = data.results[0].error
+
+        // v76.2: second request writes the outreach for what was researched.
+        const outreachResult = await writeOutreachForResults(campaignId, data.results)
+        outreachFailed += outreachResult.failed
 
         completed += data.completed || 0
         failed += data.failed || 0
@@ -466,7 +473,8 @@ export default function CampaignsPage() {
       }
     } else if (completed > 0) {
       toast.success(
-        `Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}`
+        `Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}.${outreachFailedNote(outreachFailed)}`,
+        outreachFailed > 0 ? { duration: 10000 } : undefined
       )
       router.push(`/dashboard/campaigns/${campaignId}`)
     } else {
@@ -487,6 +495,7 @@ export default function CampaignsPage() {
     let completed = 0
     let failed = 0
     let planStop = '' // v75.7
+    let outreachFailed = 0 // v76.2
     setResearchProgress({ completed: 0, total })
 
     const BATCH_SIZE = 1
@@ -509,6 +518,10 @@ export default function CampaignsPage() {
         }
         if (!res.ok) throw new Error(data.error || 'Research failed')
 
+        // v76.2: second request writes the outreach for what was researched.
+        const outreachResult = await writeOutreachForResults(campaignId, data.results)
+        outreachFailed += outreachResult.failed
+
         completed += data.completed || 0
         failed += data.failed || 0
         setResearchProgress({ completed, total })
@@ -527,7 +540,10 @@ export default function CampaignsPage() {
         setStep('add-manual')
       }
     } else if (completed > 0) {
-      toast.success(`Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}`)
+      toast.success(
+        `Researched ${completed} prospects${failed > 0 ? ` (${failed} failed)` : ''}.${outreachFailedNote(outreachFailed)}`,
+        outreachFailed > 0 ? { duration: 10000 } : undefined
+      )
       router.push(`/dashboard/campaigns/${campaignId}`)
     } else {
       toast.error('Research failed. Please try again.')
