@@ -1,6 +1,6 @@
 import Link from 'next/link'
-import HeroVideo from './components/HeroVideo'
-import TypingHero from './components/TypingHero'
+import HeroVideo from '../components/HeroVideo'
+import TypingHero from '../components/TypingHero'
 
 export default function HomePage() {
   const plans = [
