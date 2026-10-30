@@ -191,6 +191,11 @@ CRITICAL RULES about Apollo:
 
 6. organization_locations: For region-bound searches, ALSO set organization_locations to the same array. This stops US-based people who happen to work for UK companies (and vice versa) leaking in.
 
+7. Leave-outs. Only if the ICP says to leave out, exclude or avoid some kinds of firm or person. These are used as filters, NOT search terms. Use word stems of 4+ letters so variants match. Omit both fields if nothing is excluded.
+   - exclude_company_terms: firm types to leave out, matched against the COMPANY NAME only. e.g. "paraplann" (paraplanning firms), "recruit" (recruitment firms), "compliance" (compliance consultancies), "outsourc", "asset manag", "fund manag".
+   - exclude_title_terms: roles to leave out, matched against the JOB TITLE only. Only roles that clearly ARE the excluded kind of person, e.g. "paraplanner", "recruit", "fund manager". NEVER a word an in-scope person could hold as a second role (an IFA owner can also be "Compliance Officer", so never "compliance" here).
+   - Never use a word that describes who the search is FOR (e.g. not "financial", "planning", "wealth", "investment" when searching for financial planners or wealth firms).
+
 RETURN FORMAT (only include fields you are setting):
 {
   "q_keywords": "family office",
@@ -254,6 +259,36 @@ searchTerms: 1-3 summary terms for display only.${contextBlock}`,
           searchParams.q_keywords = keywords
           console.log(`[Find] No signal from parser, fell back to q_keywords="${keywords}"`)
         }
+      }
+
+      // ─── v77: leave-out terms sanity check ───
+      // Keep only short string stems, and never let one knock out what the
+      // search is FOR (e.g. "planning" when searching financial planners).
+      {
+        const arr = (v: unknown) => (Array.isArray(v) ? v : [])
+        const positives = [
+          ...arr(searchParams.person_titles),
+          ...arr(searchParams.q_organization_keyword_tags),
+          typeof searchParams.q_keywords === 'string' ? searchParams.q_keywords : '',
+        ]
+          .filter((v): v is string => typeof v === 'string' && !!v.trim())
+          .map((v) => v.toLowerCase())
+        const tidy = (v: unknown) =>
+          Array.from(
+            new Set(
+              arr(v)
+                .filter((t): t is string => typeof t === 'string')
+                .map((t) => t.trim().toLowerCase())
+                .filter((t) => t.length >= 4 && t.length <= 40)
+                .filter((t) => !positives.some((p) => p.includes(t) || t.includes(p)))
+            )
+          ).slice(0, 15)
+        searchParams.exclude_company_terms = tidy(searchParams.exclude_company_terms)
+        searchParams.exclude_title_terms = tidy(searchParams.exclude_title_terms)
+        delete searchParams.exclude_terms
+        const ec = searchParams.exclude_company_terms as string[]
+        const et = searchParams.exclude_title_terms as string[]
+        if (ec.length || et.length) console.log(`[Find] Leave out companies: ${ec.join(', ') || 'none'}; titles: ${et.join(', ') || 'none'}`)
       }
 
       // ─── Deterministic seniorities backstop (v75.1) ───

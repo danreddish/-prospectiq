@@ -64,3 +64,33 @@ export function normaliseLinkedInUrl(url: string | null | undefined): string | n
 
   return `https://${cleanedPath}${suffix}`
 }
+
+/**
+ * v77: the profile name from a /in/ URL, lower-cased and URL-decoded, e.g.
+ * "jane-smith-123" from https://www.linkedin.com/in/Jane-Smith-123/. Used to
+ * match the same person across Apollo, Ulinc and HeyReach, which differ in
+ * case, trailing slashes, query strings and http/https. Returns null for
+ * search links, Sales Navigator links and anything else that isn't /in/.
+ */
+export function linkedInProfileSlug(url: string | null | undefined): string | null {
+  if (!url) return null
+  const match = url.trim().match(/linkedin\.com\/in\/([^/?#\s]+)/i)
+  if (!match) return null
+  let slug = match[1]
+  try {
+    slug = decodeURIComponent(slug)
+  } catch {
+    // keep the raw slug if it isn't valid percent-encoding
+  }
+  slug = slug.trim().toLowerCase()
+  return slug || null
+}
+
+/**
+ * v77: the clean profile URL for a slug, https://www.linkedin.com/in/<slug>,
+ * with no query string or extra path. This is what goes to HeyReach.
+ */
+export function canonicalProfileUrl(url: string | null | undefined): string | null {
+  const slug = linkedInProfileSlug(url)
+  return slug ? `https://www.linkedin.com/in/${encodeURIComponent(slug)}` : null
+}
