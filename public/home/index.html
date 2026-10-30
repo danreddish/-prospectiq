@@ -221,7 +221,7 @@ html[data-motion=off] .rise.pending{opacity:1;transform:none;filter:none}
 .num .strip span{display:block;height:1em;line-height:1;text-align:center}
 /* a soft light that drifts under the cursor */
 .glow{position:fixed;left:0;top:0;width:680px;height:680px;margin:-340px 0 0 -340px;border-radius:50%;pointer-events:none;z-index:40;
-  background:radial-gradient(circle,rgba(255,226,208,.24),rgba(222,200,188,.13) 34%,rgba(196,159,140,.05) 56%,transparent 72%);mix-blend-mode:screen;opacity:0;transition:opacity .6s var(--ease-soft);will-change:transform}
+  background:radial-gradient(circle,rgba(255,226,208,.24),rgba(222,200,188,.13) 34%,rgba(196,159,140,.05) 56%,transparent 72%);opacity:0;transition:opacity .6s var(--ease-soft);will-change:transform}
 .glow.on{opacity:1}
 @media (pointer:coarse){.glow{display:none}}
 .res .what{font:600 12px/1.3 var(--body);letter-spacing:.14em;text-transform:uppercase;color:var(--cream)}
@@ -529,34 +529,48 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
 
   const moving = () => !window.Motion || window.Motion.moving;
 
+  /* Memory budget: the frames arrive as compressed JPEG blobs (about 20 MB for the whole film) and only a
+     small window around the playhead is ever decoded, at the canvas's own size. Nothing is decoded while
+     the film is off screen, and every decoded frame is released as soon as it leaves the window, so the
+     tab's memory stays flat however long someone scrolls up and down. */
   function Scrub(o) {
     const canvas = o.canvas, ctx = canvas.getContext('2d', { alpha: false });
-    const N = o.count, fps = o.fps || 24;
-    const AHEAD = Math.round((o.aheadSec || 2) * fps), KEEP = Math.round((o.behindSec || 1.4) * fps) + AHEAD;
-    const images = new Array(N), loaded = new Uint8Array(N);
+    const N = o.count;
+    const AHEAD = o.ahead ?? 10, BEHIND = o.behind ?? 5, SLACK = 4;
+    const blobs = new Array(N), loaded = new Uint8Array(N);
     const bitmaps = new Map(), decoding = new Set();
-    let bmpCenter = -999, current = 0, target = 0, displayed = -1, progress = 0, nLoaded = 0;
+    let center = -999, current = 0, target = 0, displayed = -1, progress = 0, nLoaded = 0;
+    let near = false, gen = 0, decKey = '';
     const maxCrop = o.maxCrop ?? 0.22;
+    const [FW, FH] = o.size || [1600, 900];
     let cw = 0, ch = 0, blendF = 0, lastBlend = -1;
 
+    function dropAll() { gen++; for (const b of bitmaps.values()) b.close(); bitmaps.clear(); decoding.clear(); center = -999; displayed = -1; }
+    // decode no bigger than the canvas draws it (cover fit); never upscale
+    function decodeSize() {
+      const s = Math.min(1, Math.max(cw / FW, ch / FH));
+      return s >= 0.98 ? null : { w: Math.max(2, Math.round(FW * s)), h: Math.max(2, Math.round(FH * s)) };
+    }
     function resize() {
       const r = canvas.getBoundingClientRect();
       const dpr = Math.min(o.dpr || 1, devicePixelRatio || 1);
       cw = Math.max(2, Math.round(r.width * dpr)); ch = Math.max(2, Math.round(r.height * dpr));
       if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; displayed = -1; }
+      const sz = decodeSize(), key = sz ? sz.w + 'x' + sz.h : 'full';
+      if (key !== decKey) { decKey = key; if (bitmaps.size || decoding.size) dropAll(); }
     }
     function nearest(i) {
-      for (let d = 0; d < N; d++) {
-        if (i - d >= 0 && (bitmaps.has(i - d) || loaded[i - d])) return i - d;
-        if (i + d < N && (bitmaps.has(i + d) || loaded[i + d])) return i + d;
+      for (let d = 1; d < N; d++) {
+        if (bitmaps.has(i - d)) return i - d;
+        if (bitmaps.has(i + d)) return i + d;
       }
       return -1;
     }
     function draw(i, force) {
       if (i === displayed && !force) return;
-      const k = bitmaps.has(i) || loaded[i] ? i : nearest(i);
-      if (k < 0) return;
-      const src = bitmaps.get(k) || images[k];
+      const k = bitmaps.has(i) ? i : nearest(i);
+      if (k < 0) return;                       // nothing decoded yet: the canvas keeps its last picture
+      const src = bitmaps.get(k);
       const w0 = src.width, h0 = src.height;
       const sCover = Math.max(cw / w0, ch / h0);
       const crop = 1 - Math.min(cw / (w0 * sCover), ch / (h0 * sCover));
@@ -565,42 +579,56 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
       if (s !== sCover) { ctx.fillStyle = o.bg || '#000'; ctx.fillRect(0, 0, cw, ch); }
       ctx.drawImage(src, (cw - w) / 2 + (o.offsetX || 0) * cw, (ch - h) / 2, w, h);
       // blend: lay the next frame over at the playhead's fraction, so slow scrolls glide instead of step
-      if (blendF > 0.02 && k === i && i + 1 < N && (bitmaps.has(i + 1) || loaded[i + 1])) {
-        const nx = bitmaps.get(i + 1) || images[i + 1];
-        ctx.globalAlpha = blendF; ctx.drawImage(nx, (cw - w) / 2 + (o.offsetX || 0) * cw, (ch - h) / 2, w, h); ctx.globalAlpha = 1;
+      if (blendF > 0.02 && k === i && bitmaps.has(i + 1)) {
+        ctx.globalAlpha = blendF; ctx.drawImage(bitmaps.get(i + 1), (cw - w) / 2 + (o.offsetX || 0) * cw, (ch - h) / 2, w, h); ctx.globalAlpha = 1;
       }
       displayed = k === i ? i : -1;
       o.onDraw && o.onDraw(ctx, cw, ch, k);
     }
-    function ensure(center) {
-      if (Math.abs(center - bmpCenter) < 3) return;
-      bmpCenter = center;
-      const lo = Math.max(0, center - KEEP + AHEAD), hi = Math.min(N - 1, center + AHEAD);
-      for (let i = lo; i <= hi; i++) {
-        if (bitmaps.has(i) || decoding.has(i) || !loaded[i]) continue;
-        decoding.add(i);
-        createImageBitmap(images[i]).then(b => {
-          decoding.delete(i);
-          if (Math.abs(i - bmpCenter) > KEEP) { b.close(); return; }
-          bitmaps.set(i, b);
-          if (i === Math.round(current)) draw(i, true);
-        }).catch(() => decoding.delete(i));
-      }
-      for (const k of Array.from(bitmaps.keys())) if (k < center - KEEP || k > center + KEEP) { bitmaps.get(k).close(); bitmaps.delete(k); }
+    const inWindow = i => i >= center - BEHIND - SLACK && i <= center + AHEAD + SLACK;
+    function decode(i) {
+      decoding.add(i); const g = gen, sz = decodeSize();
+      const p = sz ? createImageBitmap(blobs[i], { resizeWidth: sz.w, resizeHeight: sz.h, resizeQuality: 'high' }) : createImageBitmap(blobs[i]);
+      p.then(b => {
+        if (g !== gen || !near || !inWindow(i)) { b.close(); if (g === gen) decoding.delete(i); return; }
+        decoding.delete(i); bitmaps.set(i, b);
+        const f = Math.floor(current);
+        if (i === f || i === f + 1 || displayed < 0) draw(f, true);
+      }).catch(() => { if (g === gen) decoding.delete(i); });
     }
-    // concurrency-capped pump: opening run first, then stream the rest in order
-    let next = 0; const inflight = { n: 0 };
-    const order = [...Array(N).keys()];
+    function ensure(c, force) {
+      if (!near) return;
+      if (!force && Math.abs(c - center) < 2) return;
+      center = c;
+      for (let d = 0; d <= AHEAD; d++) {       // nearest frames first
+        for (const i of d ? [c + d, c - d] : [c]) {
+          if (i < 0 || i >= N || i < c - BEHIND || i > c + AHEAD) continue;
+          if (!bitmaps.has(i) && !decoding.has(i) && loaded[i]) decode(i);
+        }
+      }
+      for (const k of Array.from(bitmaps.keys())) if (!inWindow(k)) { bitmaps.get(k).close(); bitmaps.delete(k); }
+    }
+    // fetch the compressed frames in order, a few at a time, once the rest of the page has loaded
+    let next = 0, inflight = 0, started = false;
     function pump() {
-      while (inflight.n < (o.concurrency || 10) && next < N) {
-        const i = order[next++]; inflight.n++;
-        const img = new Image(); img.decoding = 'async';
-        img.onload = () => { images[i] = img; loaded[i] = 1; nLoaded++; inflight.n--; o.onLoad && o.onLoad(nLoaded / N); if (i === 0) { resize(); draw(0, true); } pump(); };
-        img.onerror = () => { inflight.n--; pump(); };
-        img.src = o.src(i);
+      while (inflight < (o.concurrency || 6) && next < N) {
+        const i = next++; inflight++;
+        fetch(o.src(i)).then(r => { if (!r.ok) throw 0; return r.blob(); }).then(b => {
+          blobs[i] = b; loaded[i] = 1; nLoaded++; inflight--; o.onLoad && o.onLoad(nLoaded / N);
+          if (near && i >= center - BEHIND && i <= center + AHEAD) ensure(center, true);
+          pump();
+        }).catch(() => { inflight--; pump(); });
       }
     }
-    pump();
+    function start() { if (started) return; started = true; pump(); }
+    if (document.readyState === 'complete') setTimeout(start, 600); else addEventListener('load', () => setTimeout(start, 600), { once: true });
+
+    // only hold decoded frames while the film is on (or about to come on) screen
+    new IntersectionObserver(es => {
+      const was = near; near = es[0].isIntersecting;
+      if (near) { start(); if (!was) { resize(); progress = measure(); target = current = progress * (N - 1); ensure(Math.floor(current), true); } }
+      else if (was) dropAll();
+    }, { rootMargin: '60% 0px 60% 0px' }).observe(o.driver);
 
     function measure() {
       const r = o.driver.getBoundingClientRect();
@@ -609,10 +637,11 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
     }
     const api = {
       get progress() { return progress; }, get frame() { return current; }, get loadedFraction() { return nLoaded / N; },
-      canvas, resize, settle() { progress = measure(); target = current = progress * (N - 1); draw(Math.round(current), true); o.onProgress && o.onProgress(progress, current); },
-      showFrame(i) { current = target = i; draw(i, true); },
+      get decoded() { return bitmaps.size; },
+      canvas, resize, settle() { progress = measure(); target = current = progress * (N - 1); ensure(Math.floor(current), true); draw(Math.floor(current), true); o.onProgress && o.onProgress(progress, current); },
+      showFrame(i) { current = target = i; ensure(Math.floor(i), true); draw(Math.floor(i), true); },
       tick() {
-        if (o.frozen && o.frozen()) return;
+        if (!near || (o.frozen && o.frozen())) return;
         progress = measure();
         target = progress * (N - 1);
         current += (target - current) * (reduced ? 1 : (o.lerp || 0.14));
@@ -630,7 +659,7 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
         o.onProgress && o.onProgress(progress, current);
       }
     };
-    addEventListener('resize', () => { resize(); draw(Math.round(current), true); });
+    addEventListener('resize', () => { resize(); ensure(Math.floor(current), true); draw(Math.floor(current), true); });
     resize();
     items.add(api);
     return api;
@@ -1066,6 +1095,15 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
   });
 })();
 
+/* the hero's ribbons video only plays while the hero is on screen */
+(() => {
+  const v = document.querySelector('.hero-video'); if (!v) return;
+  new IntersectionObserver(es => {
+    if (es[0].isIntersecting) { if (v.paused && !matchMedia('(prefers-reduced-motion: reduce)').matches) v.play().catch(() => {}); }
+    else if (!v.paused) v.pause();
+  }).observe(v);
+})();
+
 /* Level 2: the scroll film (split-film recipe) */
 (() => {
   let k = 0;
@@ -1074,7 +1112,7 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
   const N = 184, fc = document.getElementById('filmc');
   const io3 = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
   MotionEngine.Scrub({
-    blend: true, lerp: 0.09, cover: true, dpr: 2, fps: 24,
+    blend: true, lerp: 0.09, cover: true, dpr: 2, fps: 24, size: [1600, 900],
     canvas: fc, driver: document.getElementById('film'), count: N,
     src: (i) => `/home/frames/f_${String(i + 1).padStart(4, '0')}.jpg`,
     onProgress(p, cur) {
