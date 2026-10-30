@@ -17,6 +17,7 @@ import {
   getFirmDetail,
 } from '@/lib/data-sources/fca-register'
 import { findApolloProspects } from '@/lib/data-sources/apollo-find'
+import { linkedInProfileSlug } from '@/lib/linkedin'
 import { z } from 'zod'
 
 const Schema = z.object({
@@ -26,6 +27,9 @@ const Schema = z.object({
   max_individuals: z.number().min(1).max(30).default(10),
   source: z.enum(['hnw_clients', 'financial_professionals', 'global_prospects']).default('hnw_clients'),
   apollo_params: z.record(z.unknown()).optional(),
+  // v77: Global (Apollo) source only.
+  exact_profile_only: z.boolean().optional().default(false),
+  skip_excluded: z.boolean().optional().default(false),
 })
 
 export async function POST(req: NextRequest) {
@@ -45,7 +49,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   }
 
-  const { search_term, target_locations, max_individuals, source, apollo_params } = parsed.data
+  const { search_term, target_locations, max_individuals, source, apollo_params, exact_profile_only, skip_excluded } = parsed.data
 
   try {
     if (source === 'global_prospects') {
@@ -57,9 +61,61 @@ export async function POST(req: NextRequest) {
       if (budget.response) return budget.response
       let returned = 0
       try {
-        const result = await findApolloProspects(apollo_params || {}, budget.granted, search_term)
-        returned = result.individuals.length
-        return NextResponse.json(result)
+        const strings = (v: unknown) => (Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : [])
+        const exclude = {
+          company: strings(apollo_params?.exclude_company_terms),
+          title: strings(apollo_params?.exclude_title_terms),
+        }
+        const result = await findApolloProspects(apollo_params || {}, budget.granted, search_term, { exclude })
+        // v76/v75.7: one find unit per Apollo enrichment actually made, even
+        // when the person is then dropped below.
+        returned = result.enrichedCount
+
+        // v77: keep only exact LinkedIn profiles, and skip anyone already on
+        // the user's LinkedIn exclusions (e.g. their Ulinc contacts).
+        let individuals = result.individuals
+        let noProfile = 0
+        let alreadyContacted = 0
+        if (exact_profile_only) {
+          individuals = individuals.filter((p) => {
+            const keep = !!linkedInProfileSlug(p.linkedin_url)
+            if (!keep) noProfile++
+            return keep
+          })
+        }
+        if (skip_excluded && individuals.length > 0) {
+          const slugs = individuals.map((p) => linkedInProfileSlug(p.linkedin_url)).filter((v): v is string => !!v)
+          if (slugs.length > 0) {
+            const { data: hits, error: hitsError } = await supabase
+              .from('linkedin_exclusions')
+              .select('profile_slug')
+              .eq('user_id', user.id)
+              .in('profile_slug', slugs)
+            if (hitsError) {
+              // Fail closed: if we can't check, don't risk contacting someone twice.
+              console.error('[Find] LinkedIn exclusions check failed:', hitsError.message)
+              return NextResponse.json({ ...result, individuals: [], error: 'Could not check your LinkedIn exclusions. Please try again.' })
+            }
+            const excluded = new Set((hits || []).map((h) => h.profile_slug as string))
+            individuals = individuals.filter((p) => {
+              const slug = linkedInProfileSlug(p.linkedin_url)
+              const keep = !slug || !excluded.has(slug)
+              if (!keep) alreadyContacted++
+              return keep
+            })
+          }
+        }
+        if (exact_profile_only || skip_excluded || result.excludedByTerms) {
+          console.log(
+            `[Find] Apollo page ${result.page || 1}: ${result.rawCount} found, ${result.excludedByTerms} left out by exclude terms, ${noProfile} without an exact LinkedIn profile, ${alreadyContacted} already in exclusions, ${individuals.length} kept`
+          )
+        }
+        return NextResponse.json({
+          ...result,
+          individuals,
+          totalFound: individuals.length,
+          dropped: { excluded_terms: result.excludedByTerms, no_profile: noProfile, already_contacted: alreadyContacted },
+        })
       } finally {
         await refundFindUnits(user, budget.granted - returned)
       }

@@ -25,6 +25,8 @@ interface Props {
   watchedIrns?: string[]
   watchedFrns?: string[]
   initialProspectId?: string | null
+  /** v77: admin-only link to the HeyReach test page */
+  showHeyReach?: boolean
 }
 
 const WATCHLIST_ENABLED = true
@@ -51,7 +53,7 @@ function formatMonthYear(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
 }
 
-export default function CampaignDashboard({ campaign, prospects, pendingProspects, mode = 'clients', watchedIrns = [], watchedFrns = [], initialProspectId = null }: Props) {
+export default function CampaignDashboard({ campaign, prospects, pendingProspects, mode = 'clients', watchedIrns = [], watchedFrns = [], initialProspectId = null, showHeyReach = false }: Props) {
   const isAdviser = mode === 'advisers'
   const [selected, setSelected] = useState<Prospect | null>(
     (initialProspectId && prospects.find((p) => p.id === initialProspectId)) || prospects[0] || null
@@ -600,6 +602,14 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             >
               + Find More
             </a>
+            {showHeyReach && !isAdviser && (
+              <a
+                href={`/dashboard/campaigns/${campaign.id}/heyreach`}
+                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
+              >
+                HeyReach test
+              </a>
+            )}
             <button
               onClick={exportCSV}
               className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors"

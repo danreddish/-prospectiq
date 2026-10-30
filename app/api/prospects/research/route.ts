@@ -4,7 +4,7 @@ import { researchProspectScores, type ProspectFinancials } from '@/lib/ai-engine
 import { enrichWithApollo } from '@/lib/data-sources/apollo'
 import { getCompanyFinancials, wealthCeilingFromAccounts, formatAccountsCategory } from '@/lib/data-sources/companies-house'
 import { isAdmin, accessMessage, type AccessReason } from '@/lib/access'
-import { normaliseLinkedInUrl } from '@/lib/linkedin'
+import { normaliseLinkedInUrl, isLinkedInProfileUrl } from '@/lib/linkedin'
 import { z } from 'zod'
 
 const ResearchSchema = z.object({
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     // (so we don't lose it when re-running research on a pending prospect)
     supabase
       .from('prospects')
-      .select('id, company_number')
+      .select('id, company_number, email, phone, headline')
       .eq('campaign_id', campaign_id)
       .eq('name', input.name)
       .eq('status', 'pending')
@@ -259,22 +259,37 @@ export async function POST(req: NextRequest) {
 
     // Use Apollo LinkedIn URL if found, otherwise use search URL.
     // Always stored as https so older http rows do not reappear.
+    // v77: a profile found at Find (Apollo, by ID) is exact; Apollo's match
+    // here is by name and company, so it can be a namesake. Keep the exact one.
+    const inputProfile = isLinkedInProfileUrl(input.linkedin_url) ? input.linkedin_url : null
     const linkedinUrl = normaliseLinkedInUrl(
-      apolloResult?.linkedin_url || input.linkedin_url || linkedinSearchUrl
+      inputProfile || apolloResult?.linkedin_url || input.linkedin_url || linkedinSearchUrl
     )
-    const apolloEmail = apolloResult?.email || null
-    const apolloPhone = apolloResult?.phone || null
-    const apolloHeadline = apolloResult?.headline || null
+    // v77: if we kept the Find profile and Apollo's name match is a different
+    // profile, its email, phone and headline belong to someone else. Don't
+    // use them. Either way, never wipe details Find already saved.
+    const apolloIsSomeoneElse = !!(
+      inputProfile &&
+      apolloResult?.linkedin_url &&
+      normaliseLinkedInUrl(apolloResult.linkedin_url) !== normaliseLinkedInUrl(inputProfile)
+    )
+    const trusted = apolloIsSomeoneElse ? null : apolloResult
+    const apolloEmail = trusted?.email || existingPending?.email || null
+    const apolloPhone = trusted?.phone || existingPending?.phone || null
+    const apolloHeadline = trusted?.headline || existingPending?.headline || null
 
     // Backfill only what the source left blank. Never overwrite verified
     // Companies House / FCA location, company or role with Apollo's guess.
     const finalLocation = (input.location && input.location.trim())
       ? input.location
-      : (apolloResult?.location || null)
+      : (trusted?.location || null)
     const finalCompany = (input.company && input.company.trim())
       ? input.company
-      : (apolloResult?.company || null)
+      : (trusted?.company || null)
     const apolloMatched = !!apolloResult?.linkedin_url
+    if (apolloIsSomeoneElse) {
+      console.log(`[Research] Kept the profile from Find for ${input.name}; Apollo's name match was someone else, so its contact details were not used`)
+    }
 
     if (apolloMatched) {
       console.log(`[Research] Apollo matched a LinkedIn profile for ${input.name}`)

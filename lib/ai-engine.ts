@@ -296,6 +296,125 @@ Return this exact JSON structure:
   return sequence
 }
 
+// ── v77: HeyReach sequence (blank request, then msg_1 to msg_4) ──────────
+//
+// For the HeyReach test. The connection request goes out blank. Four
+// messages follow once the person accepts, in LINK Method order:
+//   msg_1 Engage in dialogue   (24 hours after they accept)
+//   msg_2 Build relationship   (5 to 7 days later)
+//   msg_3 Build relationship   (5 to 7 days later)
+//   msg_4 Exit                 (5 to 7 days later): a gracious close. Any
+//                              final offer (e.g. Dan's audit) comes from the
+//                              campaign's own instructions, not the app.
+// At about 80 tokens a second, four messages in one call take around seven
+// seconds, too close to the 10 second limit. So they are written in two
+// requests: part 1 writes msg_1 and msg_2, part 2 writes msg_3 and msg_4
+// with the first two in view so the sequence reads as one.
+
+const HEYREACH_MESSAGE_BRIEF = `msg_1 (Engage in dialogue, sent 24 hours after they accept, max 300 chars): thank them for connecting, using their first name. Stay curious and human. Ask ONE light question about their firm or role that invites a reply. NO pitch, NO mention of the sender's services, NO call ask.
+msg_2 (Build the relationship, 5-7 days later, max 600 chars): give something genuinely useful: an insight, observation or trend relevant to THEIR firm, role or clients. Reference their context. NO pitch, NO service mention, NO ask.
+msg_3 (Build the relationship, 5-7 days later, max 600 chars): a second, different piece of value that builds on msg_2. You may say in one line what the sender works on, kept directional (e.g. "helping owner-run firms win more of the right clients"), never figures. NO ask.
+msg_4 (Exit, 5-7 days later, max 400 chars): a short, gracious close. Acknowledge they are busy, say you won't keep messaging, and leave the door open for them to get in touch if it ever becomes relevant. No new pitch, no call ask, no guilt, no "just bumping this". If the sender's instructions for this campaign say what to offer in the final message, you MUST include it, as one light, optional offer they can take up by replying. Never suggest times or include a calendar link. No promised results.`
+
+const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
+- The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.
+- Each message must make sense on its own if they never replied to the one before. Do not say "following up" or "just checking in".
+- Peer to peer, warm and specific to THIS person. No salesy language, no flattery, no "I hope this finds you well".
+- NEVER invent figures, case studies, client names or statistics. Directional language only.
+- No financial advice. No guarantees. British English.
+- Never use dashes between words or clauses: no em dashes, no en dashes, no " - ". Use commas or full stops instead.
+- No words in capitals for emphasis.
+- Use their first name at most once per message, and only where it reads naturally.
+- The sender is NOT one of the prospect's peers unless the sender's details above say so. Never call them "fellow", never say "another practice like ours", and never claim the sender is local to them or has been talking to firms in their area. Describe the sender only from the sender's details above.`
+
+/**
+ * Replaces dashes used as punctuation with commas, per house style: em
+ * dashes, spaced en dashes, and a hyphen with a space either side. Hyphens
+ * inside words ("owner-run") and unspaced ranges ("2009-2024") stay.
+ */
+export function removeDashes(text: string): string {
+  return text
+    .replace(/\s*\u2014\s*/g, ', ')
+    .replace(/\s+\u2013\s+/g, ', ')
+    .replace(/\s+-\s+/g, ', ')
+    .replace(/,\s*([,.!?])/g, '$1')
+    .trim()
+}
+
+export async function writeHeyReachMessages(
+  input: ProspectInput & { first_name?: string | null },
+  research: OutreachResearchContext | null,
+  context: Omit<ResearchContext, 'financials'>,
+  part: 1 | 2,
+  earlier: { msg_1?: string; msg_2?: string } | null,
+  opts: ClaudeCallOptions = {}
+): Promise<Partial<Record<'msg_1' | 'msg_2' | 'msg_3' | 'msg_4', string>>> {
+  const serviceCtx = buildServiceContext(context.serviceProfile)
+  const instructions = context.customInstructions?.trim() || ''
+  // The sender's own instructions for this campaign. They are followed, not
+  // treated as a hint, unless they clash with the RULES. They also go in the
+  // user message, next to the task, because the model skipped them in 3 of 5
+  // final messages when they sat only in the system prompt.
+  const customBlock = instructions
+    ? `\n\nTHE SENDER'S INSTRUCTIONS FOR THIS CAMPAIGN (follow them wherever they apply to the messages you are writing, unless they break the RULES below): "${instructions}"`
+    : ''
+  const keys = part === 1 ? (['msg_1', 'msg_2'] as const) : (['msg_3', 'msg_4'] as const)
+  const reminder = instructions
+    ? `\n\nBefore you answer, re-read the sender's instructions for this campaign and make sure ${keys.join(' and ')} follow them where they apply: "${instructions}"`
+    : ''
+
+  const known: string[] = []
+  if (input.first_name) known.push(`First name: ${input.first_name}`)
+  if (research?.research_notes) known.push(`What we know: ${research.research_notes}`)
+  if (research?.key_trigger) known.push(`Why now: ${research.key_trigger}`)
+
+  const earlierBlock =
+    part === 2 && earlier?.msg_1 && earlier?.msg_2
+      ? `\n\nALREADY WRITTEN (do not repeat them, build on them):\nmsg_1: ${earlier.msg_1}\nmsg_2: ${earlier.msg_2}`
+      : ''
+
+  const startedAt = Date.now()
+  let response: Anthropic.Message
+  try {
+    response = await getAnthropic().messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      system: `Write LinkedIn messages for the sender's LinkedIn sequence. Return JSON only.
+Sender: ${context.senderName} | Who the sender is targeting: ${context.niche}${serviceCtx}${customBlock}
+
+THE FULL SEQUENCE (LINK Method order). You are writing ${keys.join(' and ')} only.
+${HEYREACH_MESSAGE_BRIEF}
+
+${HEYREACH_RULES}`,
+      messages: [{
+        role: 'user',
+        content: `Write ${keys.join(' and ')} for this prospect.
+
+Name: ${input.name}
+Role: ${input.role || 'Director'}
+Company: ${input.company || 'Unknown'}
+Location: ${input.location || 'Unknown'}${known.length ? `\n${known.join('\n')}` : ''}${earlierBlock}${reminder}
+
+Return this exact JSON structure:
+{${keys.map((k) => `"${k}": "..."`).join(', ')}}`
+      }],
+    }, claudeRequestOptions(opts))
+  } catch (err) {
+    logClaudeError(`HeyReach part ${part}`, startedAt, err)
+    throw err
+  }
+  logClaudeCall(`HeyReach part ${part}`, startedAt, response)
+
+  const raw = parseJsonObject<Record<string, unknown>>(responseText(response), `HeyReach part ${part}`)
+  const out: Partial<Record<'msg_1' | 'msg_2' | 'msg_3' | 'msg_4', string>> = {}
+  for (const k of keys) {
+    const value = typeof raw[k] === 'string' ? removeDashes(raw[k] as string) : ''
+    if (!value) throw new Error(`AI response is missing ${k}`)
+    out[k] = value
+  }
+  return out
+}
+
 /**
  * Scores and outreach in one go. Only the admin debug route uses this; the
  * live flow calls the two steps in separate requests.

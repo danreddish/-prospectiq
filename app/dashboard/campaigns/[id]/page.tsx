@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
 import { Prospect } from '@/types'
 import CampaignDashboard from './campaign-dashboard'
+import { isAdmin } from '@/lib/admin'
 
 export default async function CampaignDetailPage({
   params,
@@ -42,6 +43,7 @@ export default async function CampaignDetailPage({
       campaign={campaign}
       prospects={(prospects as Prospect[]) || []}
       pendingProspects={(pendingProspects as Prospect[]) || []}
+      showHeyReach={isAdmin(user!.email)}
     />
   )
 }

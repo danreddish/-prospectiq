@@ -15,14 +15,53 @@ export interface ApolloFindResult {
   page?: number
   usedFallback: boolean
   enrichmentsFailed?: boolean
+  /** v77: people Apollo's search returned on this page, before any filtering. */
+  rawCount: number
+  /** v77: Apollo enrichments made (each one uses an Apollo credit). */
+  enrichedCount: number
+  /** v77: people dropped because their title or company matched an exclude term. */
+  excludedByTerms: number
+}
+
+/**
+ * v77: the first "leave out" term found in a piece of text, or null. Terms
+ * are word stems matched at the start of a word, so "recruit" catches
+ * recruiter and recruitment but not "unrecruited". Hyphens are ignored on
+ * both sides, so "para-planning" matches "paraplann".
+ */
+export function matchesExcludeTerm(text: string, terms: string[]): string | null {
+  const lower = text.toLowerCase()
+  // "Para-planning" should match "paraplann"; "IFA-Recruit" should match "recruit".
+  const hays = [` ${lower.replace(/-/g, '')} `, ` ${lower.replace(/-/g, ' ')} `]
+  for (const raw of terms) {
+    const term = raw.trim().toLowerCase().replace(/-/g, '')
+    if (term.length < 3) continue
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+    const re = new RegExp(`(^|[^a-z0-9])${escaped}`, 'i')
+    if (hays.some((h) => re.test(h))) return raw
+  }
+  return null
+}
+
+/** Firm types are matched against the company name, roles against the job title. */
+export interface ExcludeTerms {
+  company: string[]
+  title: string[]
+}
+
+function excludeHit(title: string | null | undefined, company: string | null | undefined, terms: ExcludeTerms): string | null {
+  return matchesExcludeTerm(company || '', terms.company) || matchesExcludeTerm(title || '', terms.title)
 }
 
 export async function findApolloProspects(
   params: Record<string, unknown>,
   maxIndividuals: number,
   searchTermFallback: string,
-  opts: { noFallback?: boolean } = {}
+  opts: { noFallback?: boolean; exclude?: ExcludeTerms } = {}
 ): Promise<ApolloFindResult> {
+  const clean = (list?: string[]) => (list || []).filter((t) => typeof t === 'string' && t.trim().length >= 3)
+  const exclude: ExcludeTerms = { company: clean(opts.exclude?.company), title: clean(opts.exclude?.title) }
+  const excluding = exclude.company.length + exclude.title.length > 0
   const page = (params.page as number) || 1
   const perPage = Math.min(maxIndividuals, 5) // Max 5 per call to fit Netlify timeout
 
@@ -105,6 +144,22 @@ export async function findApolloProspects(
     }
   }
 
+  const rawCount = finalPeople.length
+
+  // v77: drop people the ICP says to leave out BEFORE enriching them, so no
+  // Apollo credit is spent on a recruiter or a paraplanning firm.
+  let excludedByTerms = 0
+  if (excluding) {
+    finalPeople = finalPeople.filter((p) => {
+      const hit = excludeHit(p.title, p.org_name, exclude)
+      if (hit) {
+        excludedByTerms++
+        console.log(`[Apollo] Left out before enrichment ("${hit}"): ${p.title || '?'} at ${p.org_name || '?'}`)
+      }
+      return !hit
+    })
+  }
+
   if (finalPeople.length === 0) {
     return {
       individuals: [],
@@ -112,6 +167,9 @@ export async function findApolloProspects(
       totalFound: 0,
       totalInDatabase: finalTotal,
       usedFallback,
+      rawCount,
+      enrichedCount: 0,
+      excludedByTerms,
     }
   }
 
@@ -126,6 +184,14 @@ export async function findApolloProspects(
     const raw = finalPeople[i]
 
     if (result && result.name) {
+      // v77: enrichment gives the full title and company, so check again.
+      // The headline is not checked: "we are recruiting" isn't a recruiter.
+      const hit = excluding ? excludeHit(result.title, result.company, exclude) : null
+      if (hit) {
+        excludedByTerms++
+        console.log(`[Apollo] Left out after enrichment ("${hit}"): ${result.title || '?'} at ${result.company || '?'}`)
+        continue
+      }
       // Fully enriched prospect
       prospects.push({
         name: result.name,
@@ -167,5 +233,8 @@ export async function findApolloProspects(
     page,
     usedFallback,
     enrichmentsFailed,
+    rawCount,
+    enrichedCount: results.filter((r) => r !== null).length,
+    excludedByTerms,
   }
 }

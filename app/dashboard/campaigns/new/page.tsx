@@ -92,6 +92,25 @@ export default function CampaignsPage() {
     }
   }, [searchParams])
 
+  // v77: how many LinkedIn exclusions (e.g. a Ulinc export) this account has.
+  // The route is admin-only for now, so for everyone else this stays null and
+  // the "skip" option is hidden.
+  useEffect(() => {
+    fetch('/api/heyreach/exclusions', { cache: 'no-store' })
+      .then((r) => {
+        // 404 = not an admin. Anything else is a real failure worth showing.
+        if (!r.ok && r.status !== 404) toast.error('Could not load your Ulinc contacts list. Find will not skip them this time.')
+        return r.ok ? r.json() : null
+      })
+      .then((d) => {
+        if (d && typeof d.total === 'number') {
+          setExclusionCount(d.total)
+          if (d.total > 0) setSkipExcluded(true)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
   // Load account defaults
   useEffect(() => {
     async function loadDefaults() {
@@ -116,6 +135,10 @@ export default function CampaignsPage() {
   // ICP finding
   const [icpDescription, setIcpDescription] = useState('')
   const [finding, setFinding] = useState(false)
+  // v77: Global (Apollo) source filters
+  const [exactProfileOnly, setExactProfileOnly] = useState(false)
+  const [skipExcluded, setSkipExcluded] = useState(false)
+  const [exclusionCount, setExclusionCount] = useState<number | null>(null)
   const [findingStatus, setFindingStatus] = useState('')
   const [findMeta, setFindMeta] = useState<{
     firmsSearched: number
@@ -235,6 +258,7 @@ export default function CampaignsPage() {
       log(`  person_locations: ${JSON.stringify(searchParams.person_locations || 'NONE')}`)
       log(`  org_keyword_tags: ${JSON.stringify(searchParams.q_organization_keyword_tags || 'NONE')}`)
       log(`  employee_ranges: ${JSON.stringify(searchParams.organization_num_employees_ranges || 'NONE')}`)
+      if (isGlobal) log(`  leave out: companies ${JSON.stringify(searchParams.exclude_company_terms || [])}, titles ${JSON.stringify(searchParams.exclude_title_terms || [])}`)
 
       const searchTerms: string[] = searchParams.searchTerms || searchParams.firmSearchTerms || []
       const targetLocations: string[] = searchParams.targetLocations || searchParams.locations || []
@@ -249,9 +273,18 @@ export default function CampaignsPage() {
 
       if (isGlobal) {
         // Global: loop through pages, 5 prospects per call (Netlify timeout limit)
-        const maxPages = 6 // 6 pages × 5 = 30 max prospects
+        // v77: the profile and Ulinc filters drop people after Apollo has
+        // enriched them, so when the user ticks either box we look a little
+        // further. Capped by enrichments (each uses an Apollo credit and a
+        // find unit), not pages: 30 as before, 50 with the boxes ticked.
+        const filtering = exactProfileOnly || skipExcluded || (searchParams.exclude_company_terms?.length || 0) + (searchParams.exclude_title_terms?.length || 0) > 0
+        const maxEnrichments = exactProfileOnly || skipExcluded ? 50 : 30
+        const maxPages = 12
+        let enriched = 0
+        const dropped = { excluded_terms: 0, no_profile: 0, already_contacted: 0 }
 
         for (let page = 1; page <= maxPages; page++) {
+          if (enriched >= maxEnrichments) break
           if (allProspects.length >= 30) break
           setFindingStatus(`Searching Apollo's global database (page ${page})...`)
           termsProcessed = page
@@ -267,6 +300,8 @@ export default function CampaignsPage() {
                 max_individuals: 5,
                 source: 'global_prospects',
                 apollo_params: { ...searchParams, page },
+                exact_profile_only: exactProfileOnly,
+                skip_excluded: skipExcluded,
               }),
             })
             const indData = await indRes.json()
@@ -276,8 +311,18 @@ export default function CampaignsPage() {
             }
             log(`Page ${page}: status=${indRes.status}, individuals=${indData.individuals?.length || 0}, total=${indData.totalInDatabase || '?'}, fallback=${indData.usedFallback || false}${indData.enrichmentsFailed ? ' ⚠️ ENRICHMENT FAILED (Apollo credits exhausted?)' : ''}`)
             if (indData.error) log(`  Error: ${indData.error}`)
+            if (indData.dropped) {
+              dropped.excluded_terms += indData.dropped.excluded_terms || 0
+              dropped.no_profile += indData.dropped.no_profile || 0
+              dropped.already_contacted += indData.dropped.already_contacted || 0
+              log(`  Dropped: ${indData.dropped.excluded_terms || 0} left out by leave-out terms, ${indData.dropped.no_profile || 0} without exact profile, ${indData.dropped.already_contacted || 0} already in Ulinc`)
+            }
+            enriched += typeof indData.enrichedCount === 'number' ? indData.enrichedCount : (indData.individuals || []).length
             const newProspects = indData.individuals || []
-            if (newProspects.length === 0) break // no more results
+            // v77: a page can be fully filtered out while more results exist,
+            // so stop only when Apollo itself returned nobody.
+            const rawCount = typeof indData.rawCount === 'number' ? indData.rawCount : newProspects.length
+            if (rawCount === 0 || (indData.error && newProspects.length === 0)) break // no more results
 
             for (const p of newProspects) {
               const key = `${p.name}|${p.company}`.toLowerCase()
@@ -290,6 +335,9 @@ export default function CampaignsPage() {
             log(`Page ${page} FETCH ERROR: ${fetchErr}`)
             break
           }
+        }
+        if (filtering) {
+          log(`Filters total: ${dropped.excluded_terms} left out by leave-out terms, ${dropped.no_profile} without an exact LinkedIn profile, ${dropped.already_contacted} already in Ulinc. ${allProspects.length} kept from ${enriched} Apollo lookups.`)
         }
       } else {
         // UK: loop through search terms
@@ -755,6 +803,37 @@ export default function CampaignsPage() {
                   </button>
                 ))}
               </div>
+              {/* v77: Global (Apollo) filters, applied before any research */}
+              {prospectSource === 'global_prospects' && (
+                <div className="mt-3 space-y-2">
+                  <label className="flex items-start gap-2 text-sm text-brand-cream cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={exactProfileOnly}
+                      onChange={(e) => setExactProfileOnly(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 p-0"
+                    />
+                    <span>
+                      Only keep people with an exact LinkedIn profile
+                      <span className="block text-brand-beige text-xs">Drops anyone Apollo has no profile link for. Needed for automated LinkedIn sending. Searches further to make up for it, using up to 50 Apollo lookups instead of 30.</span>
+                    </span>
+                  </label>
+                  {exclusionCount !== null && exclusionCount > 0 && (
+                    <label className="flex items-start gap-2 text-sm text-brand-cream cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={skipExcluded}
+                        onChange={(e) => setSkipExcluded(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 p-0"
+                      />
+                      <span>
+                        Skip people already in my Ulinc contacts
+                        <span className="block text-brand-beige text-xs">{exclusionCount.toLocaleString('en-GB')} LinkedIn profiles on your exclusion list.</span>
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Service Profile (collapsible) */}
