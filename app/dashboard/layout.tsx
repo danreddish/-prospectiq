@@ -80,6 +80,9 @@ export default async function DashboardLayout({
           {admin && (
             <NavLink href="/dashboard/heyreach" label="HeyReach" sub />
           )}
+          {admin && (
+            <NavLink href="/dashboard/heyreach/pipeline" label="LinkedIn pipeline" sub />
+          )}
         </nav>
 
         {/* Usage meter */}

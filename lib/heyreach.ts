@@ -15,10 +15,16 @@
 //         -> {addedLeadsCount, updatedLeadsCount, failedLeadsCount}
 //         Only works on a running campaign (not a draft). A lead without a
 //         first name, last name or profile URL fails silently.
-//   - POST /lead/GetLead {profileUrl}            the lead as HeyReach holds it
+//   - POST /lead/GetLead {profileUrl}            the LinkedIn profile HeyReach matched
+//   - POST /campaign/GetLeadsFromCampaign        {campaignId, offset, limit}
+//         -> {totalCount, items[]}, each with leadCampaignStatus,
+//         leadConnectionStatus, leadMessageStatus (v78 pipeline)
+//   - POST /stats/GetOverallStats                {accountIds, campaignIds, startDate, endDate}
+//         -> {overallStats, byDayStats} (v78 pipeline)
 //   - 300 requests a minute across the whole API.
 
 import { HEYREACH_MESSAGE_FIELDS, type HeyReachMessages } from '@/lib/heyreach-shared'
+import type { PipelineActivity, PipelineLead } from '@/lib/heyreach-pipeline'
 
 const HEYREACH_BASE = 'https://api.heyreach.io/api/public'
 
@@ -217,6 +223,126 @@ export async function addLeadToHeyReach(
 /** Reads a lead back by profile URL, to see what HeyReach stored. */
 export async function getHeyReachLead(profileUrl: string, timeoutMs = 4000): Promise<HeyReachReply> {
   return heyReachRequest('/lead/GetLead', { body: { profileUrl }, timeoutMs })
+}
+
+// ── v78: pipeline ──
+
+/** Some wrappers put the payload under "result"; HeyReach itself doesn't. Accept both. */
+function payload(body: unknown): unknown {
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const o = body as Record<string, unknown>
+    if (o.result && typeof o.result === 'object' && o.items === undefined && o.overallStats === undefined) return o.result
+  }
+  return body
+}
+
+function num(v: unknown): number {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
+  return Number.isFinite(n) ? n : 0
+}
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
+export interface HeyReachCampaignSummary {
+  id: number
+  name: string
+  status: string
+}
+
+/** Every campaign in the HeyReach workspace (up to 500). */
+export async function listHeyReachCampaigns(timeoutMs = 4000): Promise<HeyReachCampaignSummary[]> {
+  const out: HeyReachCampaignSummary[] = []
+  const limit = 100
+  for (let offset = 0; offset < 500; offset += limit) {
+    const reply = await heyReachRequest('/campaign/GetAll', { body: { offset, limit }, timeoutMs })
+    if (!reply.ok) throw new Error(`HeyReach campaign list returned ${reply.status}: ${reply.text.slice(0, 200)}`)
+    const body = payload(reply.body)
+    const items = pick<unknown[]>(body, 'items', 'campaigns', 'data') || []
+    for (const c of items) {
+      const id = Number(pick(c, 'id', 'campaignId'))
+      if (Number.isFinite(id) && id > 0) {
+        out.push({ id, name: String(pick(c, 'name') || `Campaign ${id}`), status: String(pick(c, 'status') || '').toUpperCase() })
+      }
+    }
+    const total = Number(pick(body, 'totalCount', 'total') || 0)
+    if (items.length < limit || offset + limit >= total) break
+  }
+  return out
+}
+
+/**
+ * The leads in one campaign with where each has got to. Pages of 100, up to
+ * maxLeads, and stops early if the time budget runs out (truncated: true).
+ */
+export async function getCampaignLeads(
+  campaignId: number,
+  opts: { maxLeads?: number; deadline?: number } = {}
+): Promise<{ totalCount: number; leads: PipelineLead[]; truncated: boolean }> {
+  const maxLeads = opts.maxLeads ?? 1000
+  const deadline = opts.deadline ?? Date.now() + 7000
+  const limit = 100
+  const leads: PipelineLead[] = []
+  let totalCount = 0
+  let path = '/campaign/GetLeadsFromCampaign'
+  for (let offset = 0; offset < maxLeads; offset += limit) {
+    const left = deadline - Date.now()
+    if (left < 1200) return { totalCount, leads, truncated: true }
+    let reply = await heyReachRequest(path, { body: { campaignId, offset, limit }, timeoutMs: Math.min(5000, left - 500) })
+    // Older docs put this under /lead. Try that once if /campaign is missing.
+    if (reply.status === 404 && offset === 0 && path.startsWith('/campaign')) {
+      path = '/lead/GetLeadsFromCampaign'
+      reply = await heyReachRequest(path, { body: { campaignId, offset, limit }, timeoutMs: Math.max(1000, Math.min(4000, deadline - Date.now() - 500)) })
+    }
+    if (!reply.ok) throw new Error(`HeyReach campaign leads returned ${reply.status}: ${reply.text.slice(0, 200)}`)
+    const body = payload(reply.body)
+    const items = pick<unknown[]>(body, 'items', 'leads', 'data') || []
+    totalCount = Number(pick(body, 'totalCount', 'total') || 0) || Math.max(totalCount, offset + items.length)
+    for (const item of items) {
+      const profile = (pick<Record<string, unknown>>(item, 'linkedInUserProfile', 'lead', 'profile') || item) as Record<string, unknown>
+      const first = str(profile.firstName)
+      const last = str(profile.lastName)
+      leads.push({
+        name: [first, last].filter(Boolean).join(' ') || str(profile.fullName) || 'Unknown',
+        profileUrl: str(profile.profileUrl),
+        headline: str(profile.headline),
+        company: str(profile.companyName),
+        position: str(profile.position),
+        campaignStatus: str(pick(item, 'leadCampaignStatus', 'campaignStatus', 'status')),
+        connectionStatus: str(pick(item, 'leadConnectionStatus', 'connectionStatus')),
+        messageStatus: str(pick(item, 'leadMessageStatus', 'messageStatus')),
+        lastActionTime: str(pick(item, 'lastActionTime')),
+        creationTime: str(pick(item, 'creationTime')),
+        statusMessage: str(pick(item, 'leadCampaignStatusMessage', 'errorCode')),
+      })
+    }
+    if (items.length < limit || leads.length >= totalCount) break
+  }
+  return { totalCount, leads, truncated: leads.length < totalCount }
+}
+
+/** Actions HeyReach took in a date range, for the given campaigns (all accounts). */
+export async function getOverallStats(
+  campaignIds: number[],
+  startDate: Date,
+  endDate: Date,
+  timeoutMs = 4000
+): Promise<PipelineActivity> {
+  const reply = await heyReachRequest('/stats/GetOverallStats', {
+    body: { accountIds: [], campaignIds, startDate: startDate.toISOString(), endDate: endDate.toISOString() },
+    timeoutMs,
+  })
+  if (!reply.ok) throw new Error(`HeyReach stats returned ${reply.status}: ${reply.text.slice(0, 200)}`)
+  const s = pick<Record<string, unknown>>(payload(reply.body), 'overallStats') || {}
+  return {
+    connectionsSent: num(s.connectionsSent),
+    connectionsAccepted: num(s.connectionsAccepted),
+    messagesSent: num(s.messagesSent),
+    messageThreadsStarted: num(s.totalMessageStarted),
+    replies: num(s.totalMessageReplies),
+    profileViews: num(s.profileViews),
+  }
 }
 
 /**

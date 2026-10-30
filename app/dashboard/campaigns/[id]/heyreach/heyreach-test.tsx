@@ -480,7 +480,12 @@ export default function HeyReachTest({
       {/* Results */}
       {sent.length > 0 && (
         <section className="border border-brand-charcoal rounded-lg p-5">
-          <h2 className="text-brand-cream font-semibold">4. What HeyReach returned</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-brand-cream font-semibold">4. What HeyReach returned</h2>
+            <Link href="/dashboard/heyreach/pipeline" className="text-brand-rose-gold text-xs font-semibold hover:underline">
+              See the pipeline &rarr;
+            </Link>
+          </div>
           <div className="mt-3 divide-y divide-brand-charcoal border border-brand-charcoal rounded-lg">
             {sent.map((r) => {
               const p = r.heyreach!.push!

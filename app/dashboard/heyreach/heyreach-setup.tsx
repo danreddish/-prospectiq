@@ -134,6 +134,9 @@ export default function HeyReachSetup({
         <p className="text-brand-beige text-sm mt-1">
           Send approved prospects and their four LinkedIn messages into HeyReach. Admin only for now.
         </p>
+        <Link href="/dashboard/heyreach/pipeline" className="text-brand-rose-gold text-xs font-semibold hover:underline inline-block mt-2">
+          See the LinkedIn pipeline &rarr;
+        </Link>
       </div>
 
       <section className="border border-brand-charcoal rounded-lg p-5">
