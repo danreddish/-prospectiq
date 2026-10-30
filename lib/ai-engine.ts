@@ -64,10 +64,57 @@ function buildServiceContext(sp?: ServiceProfile): string {
   return '\n' + parts.join('\n')
 }
 
-export async function researchProspect(
+// v76.2: research used to be one Claude call that scored the prospect AND
+// wrote the outreach. That call ran past 7.5 seconds on every prospect, so
+// the 9 second research deadline fired before it finished. It is now two
+// calls, each in its own request: researchProspectScores() in
+// /api/prospects/research, then writeOutreachSequence() in
+// /api/prospects/outreach. Each logs how long it took and how many tokens it
+// produced.
+
+export interface ClaudeCallOptions {
+  /** Abort the Claude call after this long, so it ends before the route deadline. */
+  timeoutMs?: number
+}
+
+export type ProspectResearch = Omit<AIResearchResult, 'outreach'>
+
+function claudeRequestOptions(opts: ClaudeCallOptions) {
+  // No automatic retries: a retry can't fit inside the deadline, and a silent
+  // retry hides the real error from the logs.
+  return { maxRetries: 0, ...(opts.timeoutMs ? { timeout: Math.max(opts.timeoutMs, 1000) } : {}) }
+}
+
+function logClaudeCall(label: string, startedAt: number, response: Anthropic.Message) {
+  console.log(
+    `[Research] Claude ${label}: ${Date.now() - startedAt}ms, ${response.usage.input_tokens} tokens in, ${response.usage.output_tokens} out, stop: ${response.stop_reason}`
+  )
+}
+
+function logClaudeError(label: string, startedAt: number, err: unknown) {
+  const message = err instanceof Error ? err.message : String(err)
+  console.error(`[Research] Claude ${label} failed after ${Date.now() - startedAt}ms: ${message}`)
+}
+
+function responseText(response: Anthropic.Message): string {
+  return response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => (b.type === 'text' ? b.text : ''))
+    .join('')
+}
+
+function parseJsonObject<T>(text: string, label: string): T {
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) throw new Error(`AI ${label} response did not contain valid JSON`)
+  return JSON.parse(jsonMatch[0]) as T
+}
+
+/** Step 1 of research: notes, estimates and the four scores. No outreach. */
+export async function researchProspectScores(
   input: ProspectInput,
-  context: ResearchContext
-): Promise<AIResearchResult> {
+  context: ResearchContext,
+  opts: ClaudeCallOptions = {}
+): Promise<ProspectResearch> {
   const serviceCtx = buildServiceContext(context.serviceProfile)
 
   // Financial constraints block (only present for HNW UK prospects with CH data)
@@ -91,10 +138,13 @@ export async function researchProspect(
     customBlock = `\n\nUSER INSTRUCTIONS FOR THIS CAMPAIGN (apply to scoring and outreach personalisation): "${context.customInstructions.trim()}"`
   }
 
-  const response = await getAnthropic().messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1200,
-    system: `Research prospects for a financial services professional. Return JSON only.
+  const startedAt = Date.now()
+  let response: Anthropic.Message
+  try {
+    response = await getAnthropic().messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      system: `Research prospects for a financial services professional. Return JSON only.
 Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}${financialsBlock}
 
 SCORING (1-10 each):
@@ -110,14 +160,10 @@ AGE ESTIMATE: Infer from career length implied by seniority. Do NOT default to 5
 
 YEARS AT SENIOR LEVEL: Estimate based on role seniority and typical career progression. Vary this — not everyone has 12 years.
 
-OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence that EARNS a conversation. It does not chase a call. These are senior, wealthy, heavily-pitched people: a stranger asking for 15 minutes reads as a sales script and gets ignored. The sequence must feel like a credible peer reaching out, not a funnel.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''}
-Step1 (Connection Request, max 280 chars): NO pitch, NO ask, NO mention of a call or meeting. One genuine, specific reason for connecting tied to something real about them or their company. The only goal is that they accept.
-Step2 (Welcome Message, max 600 chars): thank them for connecting. Stay curious and human. Ask ONE thoughtful question relevant to their situation. NO pitch and NO call ask here either.
-Step3 (Value + Soft Door, max 800 chars): lead with something genuinely useful. You may include ONE short illustrative example of how someone in a similar position handled this, but keep it DIRECTIONAL, never fake-precise: say things like "saved a meaningful amount in tax and a lot of admin", NEVER invented exact figures like "£47k" or "saved £24k a year". Precise numbers from a near-stranger read as a script and destroy trust. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share how a couple of others approached it, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
 British English. No financial advice. No guarantees. Peer tone.`,
-    messages: [{
-      role: 'user',
-      content: `Research this prospect and return a UNIQUE analysis. Do NOT use default/template values.
+      messages: [{
+        role: 'user',
+        content: `Research this prospect and return a UNIQUE analysis. Do NOT use default/template values.
 
 Name: ${input.name}
 Role: ${input.role || 'Director'}
@@ -131,27 +177,18 @@ Return this exact JSON structure (fill in ALL values uniquely for this specific 
   "est_age": "estimate based on THIS person's likely career stage",
   "yrs_at_sr_level": 0,
   "key_trigger": "one sentence about why they might need services NOW",
-  "scores": {"wealth": 0, "timing": 0, "accessibility": 0, "complexity": 0},
-  "total_score": 0,
-  "tier": "A or B or C",
-  "outreach": {
-    "step1": {"title": "Connection Request", "timing": "Day 0", "charLimit": 280, "message": "...", "chars": 0, "personalization": "..."},
-    "step2": {"title": "Welcome Message", "timing": "24hrs later", "charLimit": 600, "message": "...", "chars": 0, "personalization": "..."},
-    "step3": {"title": "Value + Soft Door", "timing": "5-7 days later", "charLimit": 800, "message": "...", "chars": 0, "personalization": "..."}
-  }
+  "scores": {"wealth": 0, "timing": 0, "accessibility": 0, "complexity": 0}
 }`
-    }],
-  })
+      }],
+    }, claudeRequestOptions(opts))
+  } catch (err) {
+    logClaudeError('research', startedAt, err)
+    throw err
+  }
+  logClaudeCall('research', startedAt, response)
 
-  const text = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => (b.type === 'text' ? b.text : ''))
-    .join('')
-
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('AI response did not contain valid JSON')
-
-  const result = JSON.parse(jsonMatch[0]) as AIResearchResult
+  const result = parseJsonObject<ProspectResearch>(responseText(response), 'research')
+  if (!result.scores) result.scores = {}
 
   // Enforce hard cap server-side too, in case the model ignored the prompt.
   if (context.financials?.wealthCeiling !== null && context.financials?.wealthCeiling !== undefined) {
@@ -162,8 +199,114 @@ Return this exact JSON structure (fill in ALL values uniquely for this specific 
     }
   }
 
-  validateResult(result)
+  validateScores(result)
   return result
+}
+
+/** What the outreach call knows from step 1. */
+export interface OutreachResearchContext {
+  research_notes?: string | null
+  key_trigger?: string | null
+}
+
+const OUTREACH_STEPS = [
+  { key: 'step1', title: 'Connection Request', timing: 'Day 0', charLimit: 280 },
+  { key: 'step2', title: 'Welcome Message', timing: '24hrs later', charLimit: 600 },
+  { key: 'step3', title: 'Value + Soft Door', timing: '5-7 days later', charLimit: 800 },
+] as const
+
+/** Step 2 of research: the LINK Method sequence (v75.4 rules, unchanged). */
+export async function writeOutreachSequence(
+  input: ProspectInput,
+  research: OutreachResearchContext | null,
+  context: Omit<ResearchContext, 'financials'>,
+  opts: ClaudeCallOptions = {}
+): Promise<OutreachSequence> {
+  const serviceCtx = buildServiceContext(context.serviceProfile)
+  let customBlock = ''
+  if (context.customInstructions && context.customInstructions.trim()) {
+    customBlock = `\n\nUSER INSTRUCTIONS FOR THIS CAMPAIGN (apply to scoring and outreach personalisation): "${context.customInstructions.trim()}"`
+  }
+
+  const known: string[] = []
+  if (research?.research_notes) known.push(`What we know: ${research.research_notes}`)
+  if (research?.key_trigger) known.push(`Why now: ${research.key_trigger}`)
+
+  const startedAt = Date.now()
+  let response: Anthropic.Message
+  try {
+    response = await getAnthropic().messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 900,
+      system: `Write LinkedIn outreach for a financial services professional. Return JSON only.
+Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}
+
+OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence that EARNS a conversation. It does not chase a call. These are senior, wealthy, heavily-pitched people: a stranger asking for 15 minutes reads as a sales script and gets ignored. The sequence must feel like a credible peer reaching out, not a funnel.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''}
+Step1 (Connection Request, max 280 chars): NO pitch, NO ask, NO mention of a call or meeting. One genuine, specific reason for connecting tied to something real about them or their company. The only goal is that they accept.
+Step2 (Welcome Message, max 600 chars): thank them for connecting. Stay curious and human. Ask ONE thoughtful question relevant to their situation. NO pitch and NO call ask here either.
+Step3 (Value + Soft Door, max 800 chars): lead with something genuinely useful. You may include ONE short illustrative example of how someone in a similar position handled this, but keep it DIRECTIONAL, never fake-precise: say things like "saved a meaningful amount in tax and a lot of admin", NEVER invented exact figures like "£47k" or "saved £24k a year". Precise numbers from a near-stranger read as a script and destroy trust. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share how a couple of others approached it, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
+British English. No financial advice. No guarantees. Peer tone.`,
+      messages: [{
+        role: 'user',
+        content: `Write the outreach sequence for this prospect. Make it specific to THIS person.
+
+Name: ${input.name}
+Role: ${input.role || 'Director'}
+Company: ${input.company || 'Unknown'}
+Location: ${input.location || 'Unknown'}${known.length ? `\n${known.join('\n')}` : ''}
+
+Return this exact JSON structure:
+{
+  "step1": {"message": "...", "personalization": "the detail this message uses, under 15 words"},
+  "step2": {"message": "...", "personalization": "..."},
+  "step3": {"message": "...", "personalization": "..."}
+}`
+      }],
+    }, claudeRequestOptions(opts))
+  } catch (err) {
+    logClaudeError('outreach', startedAt, err)
+    throw err
+  }
+  logClaudeCall('outreach', startedAt, response)
+
+  const raw = parseJsonObject<Record<string, { message?: string; personalization?: string } | undefined>>(
+    responseText(response),
+    'outreach'
+  )
+
+  const sequence: OutreachSequence = {}
+  for (const step of OUTREACH_STEPS) {
+    const message = (raw[step.key]?.message || '').trim()
+    if (!message) throw new Error(`AI outreach response is missing ${step.key}`)
+    let finalMessage = message
+    // Same rule as before v76.2: only the connection request is hard-trimmed,
+    // because LinkedIn rejects a note over 280 characters.
+    if (step.key === 'step1' && finalMessage.length > 280) {
+      finalMessage = finalMessage.slice(0, 277) + '...'
+    }
+    sequence[step.key] = {
+      title: step.title,
+      timing: step.timing,
+      charLimit: step.charLimit,
+      message: finalMessage,
+      chars: finalMessage.length,
+      personalization: (raw[step.key]?.personalization || '').trim(),
+    }
+  }
+  return sequence
+}
+
+/**
+ * Scores and outreach in one go. Only the admin debug route uses this; the
+ * live flow calls the two steps in separate requests.
+ */
+export async function researchProspect(
+  input: ProspectInput,
+  context: ResearchContext
+): Promise<AIResearchResult> {
+  const research = await researchProspectScores(input, context)
+  const outreach = await writeOutreachSequence(input, research, context)
+  return { ...research, outreach }
 }
 
 export async function researchBatch(
@@ -183,7 +326,7 @@ export async function researchBatch(
   return results
 }
 
-function validateResult(result: AIResearchResult): void {
+function validateScores(result: ProspectResearch): void {
   for (const [key, value] of Object.entries(result.scores)) {
     if (typeof value === 'number') {
       result.scores[key] = Math.max(1, Math.min(10, Math.round(value)))
@@ -194,13 +337,6 @@ function validateResult(result: AIResearchResult): void {
   if (result.total_score >= 30) result.tier = 'A'
   else if (result.total_score >= 22) result.tier = 'B'
   else result.tier = 'C'
-  if (result.outreach.step1) {
-    result.outreach.step1.chars = result.outreach.step1.message.length
-    if (result.outreach.step1.chars > 280) {
-      result.outreach.step1.message = result.outreach.step1.message.slice(0, 277) + '...'
-      result.outreach.step1.chars = 280
-    }
-  }
 }
 
 function createFailedResult(errorMessage: string): AIResearchResult {

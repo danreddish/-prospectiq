@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { researchProspect, type ProspectFinancials } from '@/lib/ai-engine'
+import { researchProspectScores, type ProspectFinancials } from '@/lib/ai-engine'
 import { enrichWithApollo } from '@/lib/data-sources/apollo'
 import { getCompanyFinancials, wealthCeilingFromAccounts, formatAccountsCategory } from '@/lib/data-sources/companies-house'
 import { isAdmin, accessMessage, type AccessReason } from '@/lib/access'
@@ -27,6 +27,20 @@ const ResearchSchema = z.object({
 // prospect stuck on 'processing'.
 const RESEARCH_DEADLINE_MS = 9000
 
+// v76.2: time kept back from the Claude call for saving the result.
+const SAVE_RESERVE_MS = 800
+
+// v76.2: the outreach sequence is no longer written here. This request finds
+// the LinkedIn profile, reads Companies House and scores the prospect, then
+// the browser calls /api/prospects/outreach for the messages. Every step logs
+// how long it took, measured from the start of the request.
+function stepLog(startedAt: number, step: string, stepStartedAt: number, detail?: string) {
+  const now = Date.now()
+  console.log(
+    `[Research] ${step}: ${now - stepStartedAt}ms (at ${((now - startedAt) / 1000).toFixed(1)}s)${detail ? `. ${detail}` : ''}`
+  )
+}
+
 export async function POST(req: NextRequest) {
   const startedAt = Date.now()
   const supabase = createClient()
@@ -37,6 +51,7 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  stepLog(startedAt, 'Signed in', startedAt)
 
   const body = await req.json()
   const parsed = ResearchSchema.safeParse(body)
@@ -47,10 +62,22 @@ export async function POST(req: NextRequest) {
   const { campaign_id, prospects: prospectInputs } = parsed.data
   const input = prospectInputs[0]
 
-  // Get campaign + profile in parallel (saves ~300ms)
-  const [campaignRes, profileRes] = await Promise.all([
+  // Get campaign, profile and any pending row for this prospect in parallel.
+  // The pending row is only used once the campaign is confirmed as the user's.
+  const setupStartedAt = Date.now()
+  const [campaignRes, profileRes, pendingRes] = await Promise.all([
     supabase.from('campaigns').select('id, niche, sender_name, prospect_count, service_profile, custom_instructions').eq('id', campaign_id).eq('user_id', user.id).single(),
     supabase.from('profiles').select('niche, sender_name, service_profile').eq('id', user.id).single(),
+    // Check if this prospect already has a company_number stored from the find step
+    // (so we don't lose it when re-running research on a pending prospect)
+    supabase
+      .from('prospects')
+      .select('id, company_number')
+      .eq('campaign_id', campaign_id)
+      .eq('name', input.name)
+      .eq('status', 'pending')
+      .limit(1)
+      .maybeSingle(),
   ])
 
   if (!campaignRes.data) {
@@ -98,18 +125,8 @@ export async function POST(req: NextRequest) {
     geographic_focus: campaignSP.geographic_focus || accountSP.geographic_focus || null,
   }
 
-  // Check if this prospect already has a company_number stored from the find step
-  // (so we don't lose it when re-running research on a pending prospect)
   let storedCompanyNumber: string | null = null
-  const { data: existingPending } = await supabase
-    .from('prospects')
-    .select('id, company_number')
-    .eq('campaign_id', campaign_id)
-    .eq('name', input.name)
-    .eq('status', 'pending')
-    .limit(1)
-    .single()
-
+  const existingPending = pendingRes.data
   if (existingPending?.company_number) storedCompanyNumber = existingPending.company_number
 
   const effectiveCompanyNumber = input.company_number || storedCompanyNumber
@@ -143,6 +160,7 @@ export async function POST(req: NextRequest) {
     }
     prospectId = inserted.id
   }
+  stepLog(startedAt, 'Campaign, plan and prospect row ready', setupStartedAt)
 
   // Research + Apollo enrichment + CH financials in parallel
   try {
@@ -158,20 +176,32 @@ export async function POST(req: NextRequest) {
 
     // v75.7: everything slow runs inside work(), raced against the deadline.
     const work = async () => {
-      // Pull Apollo enrichment and CH financials in parallel BEFORE research,
-      // so research can use the financial data to apply hard scoring caps.
-      const [apolloResult, chFinancials] = await Promise.all([
-        enrichWithApollo(firstName, lastName, input.company || '').catch((err) => {
+      // Apollo doesn't feed the Claude call, so it runs alongside it. It has
+      // its own 3.5 second budget (see enrichWithApollo).
+      const apolloStartedAt = Date.now()
+      const apolloPromise = enrichWithApollo(firstName, lastName, input.company || '')
+        .then((r) => {
+          stepLog(
+            startedAt,
+            'Apollo enrichment',
+            apolloStartedAt,
+            r ? (r.linkedin_url ? 'LinkedIn profile found' : 'person found, no LinkedIn profile') : 'no match'
+          )
+          return r
+        })
+        .catch((err) => {
           console.error('[Research] Apollo enrichment failed:', err)
           return null
-        }),
-        effectiveCompanyNumber
-          ? getCompanyFinancials(effectiveCompanyNumber).catch((err) => {
-              console.error('[Research] CH financials failed:', err)
-              return null
-            })
-          : Promise.resolve(null),
-      ])
+        })
+
+      // Companies House goes first: research uses it for the hard wealth caps.
+      const chStartedAt = Date.now()
+      const chFinancials = effectiveCompanyNumber
+        ? await getCompanyFinancials(effectiveCompanyNumber).catch((err) => {
+            console.error('[Research] CH financials failed:', err)
+            return null
+          })
+        : null
 
       // Build the financials package for the AI engine
       let financialsForAi: ProspectFinancials | null = null
@@ -184,16 +214,34 @@ export async function POST(req: NextRequest) {
           wealthCeiling: wealthCeilingFromAccounts(chFinancials.accountsCategory, chFinancials.companyStatus),
           formattedCategory: formatAccountsCategory(chFinancials.accountsCategory),
         }
-        console.log(`[Research] CH financials: ${financialsForAi.formattedCategory}, ceiling: ${financialsForAi.wealthCeiling ?? 'none'}`)
       }
+      stepLog(
+        startedAt,
+        'CH financials',
+        chStartedAt,
+        financialsForAi
+          ? `${financialsForAi.formattedCategory}, ceiling: ${financialsForAi.wealthCeiling ?? 'none'}`
+          : effectiveCompanyNumber ? 'no data' : 'no company number, skipped'
+      )
 
-      const research = await researchProspect(input, {
-        niche: campaign.niche || profile?.niche || 'Wealth management',
-        senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
-        serviceProfile,
-        customInstructions: campaign.custom_instructions || null,
-        financials: financialsForAi,
-      })
+      // The Claude call logs its own duration and token counts.
+      const research = await researchProspectScores(
+        input,
+        {
+          niche: campaign.niche || profile?.niche || 'Wealth management',
+          senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
+          serviceProfile,
+          customInstructions: campaign.custom_instructions || null,
+          financials: financialsForAi,
+        },
+        { timeoutMs: RESEARCH_DEADLINE_MS - (Date.now() - startedAt) - SAVE_RESERVE_MS }
+      )
+
+      const waitStartedAt = Date.now()
+      const apolloResult = await apolloPromise
+      const waited = Date.now() - waitStartedAt
+      if (waited > 50) stepLog(startedAt, 'Waited for Apollo after Claude', waitStartedAt)
+
       return { apolloResult, chFinancials, research }
     }
 
@@ -236,7 +284,8 @@ export async function POST(req: NextRequest) {
       console.log(`[Research] No Apollo match for ${input.name}; using LinkedIn search fallback`)
     }
 
-    // Save results
+    // Save results. Outreach is written by /api/prospects/outreach next.
+    const saveStartedAt = Date.now()
     await admin
       .from('prospects')
       .update({
@@ -257,10 +306,11 @@ export async function POST(req: NextRequest) {
         scores: research.scores,
         total_score: research.total_score,
         tier: research.tier,
-        outreach: research.outreach,
+        outreach: {},
         status: 'completed',
       })
       .eq('id', prospectId)
+    stepLog(startedAt, 'Saved', saveStartedAt, `Research finished in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`)
 
     return NextResponse.json({
       results: [{
@@ -271,13 +321,14 @@ export async function POST(req: NextRequest) {
         email: apolloEmail,
         apollo_match: apolloMatched,
         accounts_category: chFinancials?.accountsCategory || null,
+        outreach_pending: true,
       }],
       completed: 1,
       failed: 0,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Research failed'
-    console.error(`[Research] FAILED for ${input.name}:`, message)
+    console.error(`[Research] FAILED for ${input.name} at ${((Date.now() - startedAt) / 1000).toFixed(1)}s:`, message)
     if (error instanceof Error && error.stack) {
       console.error('[Research] Stack:', error.stack.slice(0, 500))
     }

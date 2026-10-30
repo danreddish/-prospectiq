@@ -115,6 +115,58 @@ export async function searchCompanies(
   })
 }
 
+// ── Whole-word name matching (v76.2) ─────────
+//
+// The Companies House search matches the start of words, so a search for
+// "IFA" returns IFARM MANAGEMENT LTD and IFACILITATE MANAGEMENT CONSULT LTD.
+// These helpers keep a result only when every meaningful word of the search
+// appears in the company name as a whole word. A plural "s" still counts as
+// the same word, so "adviser" matches "Advisers".
+
+// Words that say nothing about the business. Legal suffixes, joining words
+// and country names are ignored on both sides.
+const NAME_FILLER_WORDS = new Set([
+  'and', 'the', 'of', 'for', 'in', 'at', 'to', 'a', 'an',
+  'ltd', 'limited', 'plc', 'llp', 'lp', 'co', 'company',
+  'uk', 'gb', 'england', 'scotland', 'wales', 'britain', 'united', 'kingdom',
+])
+
+function nameWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
+
+function sameWord(a: string, b: string): boolean {
+  return a === b || a === `${b}s` || b === `${a}s`
+}
+
+/**
+ * The words a company name must contain for this search. Location words are
+ * left out, because search terms often add a place ("financial planning
+ * Leeds") that is in the address, not the name.
+ */
+export function requiredNameWords(searchTerm: string, locations: string[] = []): string[] {
+  const locationWords = new Set(locations.flatMap(nameWords))
+  return Array.from(
+    new Set(nameWords(searchTerm).filter((w) => !NAME_FILLER_WORDS.has(w) && !locationWords.has(w)))
+  )
+}
+
+/** True when every required word is a whole word in the company name. */
+export function nameHasWholeWords(companyName: string, required: string[]): boolean {
+  if (required.length === 0) return true
+  const words = nameWords(companyName)
+  return required.every((r) => words.some((w) => sameWord(w, r)))
+}
+
+/** Dormant companies file dormant accounts. Their status still reads "active". */
+export function isDormantAccounts(accountsCategory: string | null | undefined): boolean {
+  return !!accountsCategory && accountsCategory.toLowerCase().includes('dormant')
+}
+
 export async function getCompanyProfile(companyNumber: string): Promise<CHCompanyProfile | null> {
   const data = await chFetch(`/company/${companyNumber}`)
   if (!data) return null

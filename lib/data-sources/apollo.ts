@@ -15,14 +15,18 @@ function getApiKey(): string | null {
   return process.env.APOLLO_API_KEY || null
 }
 
-async function apolloFetch(path: string, body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+async function apolloFetch(
+  path: string,
+  body: Record<string, unknown>,
+  timeoutMs: number = 4000
+): Promise<Record<string, unknown> | null> {
   const apiKey = getApiKey()
   if (!apiKey) return null
 
   // Per-call timeout so one slow Apollo request cannot hang a Netlify function
-  // (10s hard limit). The match chain makes up to three calls, so cap each.
+  // (10s hard limit). The match chain also has an overall budget, below.
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 4000)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(`${APOLLO_BASE}${path}`, {
       method: 'POST',
@@ -150,16 +154,35 @@ export function cleanCompanyName(name: string): string {
   return out || name.trim()
 }
 
+// The whole match chain must finish inside the research deadline, because it
+// runs alongside the Claude call. A good match takes well under a second, so
+// 3.5s is plenty; later attempts are skipped when the budget runs low.
+const MATCH_CHAIN_BUDGET_MS = 3500
+const MIN_ATTEMPT_MS = 600
+
 // Tries a short chain of match attempts and returns the first result that
 // carries a real LinkedIn profile URL. Each attempt is one Apollo call.
-// Reveal of personal email/phone is requested so Companies House and FCA
-// prospects get the same contact data the global flow already gets.
+//
+// reveal_personal_emails is requested so Companies House and FCA prospects
+// get the same contact data the global flow already gets. It is answered in
+// the same response and needs no webhook. (Apollo never reveals personal
+// emails for people in GDPR regions, so most UK prospects won't have one.)
+//
+// reveal_phone_number is NOT sent. Apollo delivers revealed phone numbers
+// later, to a webhook, and rejects the whole request with a 400
+// (SEARCH.VALIDATION.WEBHOOK_URL_REQUIRED) when there is no webhook_url. That
+// 400 stopped every match, so no prospect got a LinkedIn URL. Phone numbers
+// Apollo already holds still come back in the normal response.
 export async function enrichWithApollo(
   firstName: string,
   lastName: string,
-  companyName: string
+  companyName: string,
+  options: { budgetMs?: number } = {}
 ): Promise<ApolloEnrichResult | null> {
   if (!firstName && !lastName) return null
+
+  const budgetMs = options.budgetMs ?? MATCH_CHAIN_BUDGET_MS
+  const chainStart = Date.now()
 
   const cleaned = cleanCompanyName(companyName)
   const orgAttempts: (string | null)[] = []
@@ -171,17 +194,34 @@ export async function enrichWithApollo(
 
   let firstParsed: ApolloEnrichResult | null = null
 
-  for (const org of orgAttempts) {
+  for (let i = 0; i < orgAttempts.length; i++) {
+    const org = orgAttempts[i]
+    const remaining = budgetMs - (Date.now() - chainStart)
+    if (remaining < MIN_ATTEMPT_MS) {
+      console.log(`[Apollo] Match chain stopped before attempt ${i + 1}: ${Math.max(remaining, 0)}ms of ${budgetMs}ms left`)
+      break
+    }
+
     const payload: Record<string, unknown> = {
       first_name: firstName,
       last_name: lastName,
       reveal_personal_emails: true,
-      reveal_phone_number: true,
     }
     if (org) payload.organization_name = org
 
-    const data = await apolloFetch('/people/match', payload)
+    const attemptStart = Date.now()
+    const data = await apolloFetch('/people/match', payload, Math.min(4000, remaining))
     const parsed = parsePersonResult(data)
+    const outcome = !data
+      ? 'request failed'
+      : !parsed
+        ? 'no match'
+        : parsed.linkedin_url
+          ? 'LinkedIn profile found'
+          : 'person found, no LinkedIn profile'
+    console.log(
+      `[Apollo] Match ${i + 1}/${orgAttempts.length} (${org ? `company "${org}"` : 'name only'}): ${Date.now() - attemptStart}ms, ${outcome}`
+    )
 
     if (parsed) {
       if (!firstParsed) firstParsed = parsed
