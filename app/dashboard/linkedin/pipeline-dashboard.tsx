@@ -18,6 +18,8 @@ interface Lead extends PipelineLead {
 }
 
 interface PipelineData {
+  admin?: boolean
+  notSetUp?: boolean
   campaigns?: Campaign[]
   campaign?: Campaign | null
   days?: number
@@ -76,7 +78,7 @@ function FunnelBar({ label, value, whole, note }: { label: string; value: number
   )
 }
 
-export default function PipelineDashboard() {
+export default function PipelineDashboard({ admin }: { admin: boolean }) {
   const [data, setData] = useState<PipelineData | null>(null)
   const [loading, setLoading] = useState(false)
   const [campaignId, setCampaignId] = useState<number | null>(null)
@@ -116,10 +118,10 @@ export default function PipelineDashboard() {
     <div className="p-8 max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-brand-rose-gold text-[10px] font-bold tracking-[2px] uppercase mb-1">Admin</p>
+          {admin && <p className="text-brand-rose-gold text-[10px] font-bold tracking-[2px] uppercase mb-1">Admin: all campaigns</p>}
           <h1 className="text-2xl font-display text-brand-cream">LinkedIn pipeline</h1>
           <p className="text-brand-beige text-sm mt-1">
-            Live from HeyReach: who has been sent a connection request, who accepted, and who replied.
+            Live from your LinkedIn campaign: who has been sent a connection request, who accepted, and who replied.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -132,6 +134,7 @@ export default function PipelineDashboard() {
 
       {/* Filters: one row, above everything they change */}
       <div className="flex flex-wrap items-center gap-3">
+        {(data?.campaigns?.length || 0) > 1 && (
         <label className="text-brand-beige text-xs flex items-center gap-2">
           Campaign
           <select
@@ -151,6 +154,7 @@ export default function PipelineDashboard() {
             ))}
           </select>
         </label>
+        )}
         <label className="text-brand-beige text-xs flex items-center gap-2">
           Activity period
           <select
@@ -172,13 +176,21 @@ export default function PipelineDashboard() {
         </label>
       </div>
 
-      {!data && <p className="text-brand-beige text-sm">Loading from HeyReach...</p>}
+      {!data && <p className="text-brand-beige text-sm">Loading your pipeline...</p>}
+      {data?.notSetUp && (
+        <section className="border border-brand-charcoal rounded-lg p-5">
+          <h2 className="text-brand-cream font-semibold">Not set up yet</h2>
+          <p className="text-brand-beige text-sm mt-1">
+            Your LinkedIn pipeline appears here once your LinkedIn campaign is live. Nothing to do on your side.
+          </p>
+        </section>
+      )}
       {data?.problem && <p className="text-red-400 text-sm">{data.problem}</p>}
 
       {data?.campaign && (
         <>
           {data.leadsError ? (
-            <p className="text-red-400 text-sm">Could not load the campaign&apos;s leads from HeyReach: {data.leadsError}</p>
+            <p className="text-red-400 text-sm">Could not load the campaign&apos;s people: {data.leadsError}</p>
           ) : (
             funnel && (
               <>
@@ -192,7 +204,7 @@ export default function PipelineDashboard() {
                 <section className="border border-brand-charcoal rounded-lg p-5">
                   <h2 className="text-brand-cream font-semibold">Where everyone is now</h2>
                   <p className="text-brand-beige text-xs mt-1">
-                    &ldquo;{data.campaign.name}&rdquo; is {niceStatus(data.campaign.status)}. HeyReach sends on the campaign&apos;s own schedule.
+                    &ldquo;{data.campaign.name}&rdquo; is {niceStatus(data.campaign.status)}. Requests and messages go out on the campaign&apos;s own schedule.
                   </p>
                   <div className="mt-5 space-y-3">
                     <FunnelBar label="In the campaign" value={funnel.inCampaign} whole={funnel.inCampaign} note={stopped || undefined} />
@@ -212,10 +224,10 @@ export default function PipelineDashboard() {
           <section className="border border-brand-charcoal rounded-lg p-5">
             <h2 className="text-brand-cream font-semibold">Activity in the last {data.days} days</h2>
             <p className="text-brand-beige text-xs mt-1">
-              Every action HeyReach took in this campaign in the period, so it can differ from &ldquo;where everyone is now&rdquo;.
+              Every action taken in this campaign in the period, so it can differ from &ldquo;where everyone is now&rdquo;.
             </p>
             {data.activityError ? (
-              <p className="text-red-400 text-sm mt-3">Could not load activity from HeyReach: {data.activityError}</p>
+              <p className="text-red-400 text-sm mt-3">Could not load activity: {data.activityError}</p>
             ) : (
               activity && (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
@@ -279,7 +291,7 @@ export default function PipelineDashboard() {
                               {l.stageLabel}
                             </span>
                             {l.stage === 'already_connected' ? (
-                              <p className="text-brand-beige text-[11px] mt-1">Stopped by HeyReach. Message them directly.</p>
+                              <p className="text-brand-beige text-[11px] mt-1">Already in your network, so the campaign stopped. Message them directly.</p>
                             ) : (
                               l.statusMessage && <p className="text-brand-beige text-[11px] mt-1">{l.statusMessage}</p>
                             )}
@@ -287,7 +299,7 @@ export default function PipelineDashboard() {
                           <td className="py-3 pr-4 text-brand-beige tabular-nums whitespace-nowrap">{when(l.lastActionTime || l.creationTime)}</td>
                           <td className="py-3 text-brand-beige whitespace-nowrap">
                             {l.prospectiq ? (
-                              <Link href={`/dashboard/campaigns/${l.prospectiq.campaignId}/heyreach`} className="hover:text-brand-rose-gold">
+                              <Link href={admin ? `/dashboard/campaigns/${l.prospectiq.campaignId}/heyreach` : `/dashboard/campaigns/${l.prospectiq.campaignId}`} className="hover:text-brand-rose-gold">
                                 {l.prospectiq.tier ? `Tier ${l.prospectiq.tier}` : 'Sent'}
                                 {l.prospectiq.score !== null ? ` · ${l.prospectiq.score}` : ''}
                               </Link>
@@ -302,7 +314,7 @@ export default function PipelineDashboard() {
                 </div>
               )}
               <p className="text-brand-beige text-[11px] mt-4">
-                Acceptance rate is accepted out of requests sent. Reply rate is replied out of those messaged. This campaign starts with a connection request, so HeyReach stops anyone who is already connected to you; message them directly instead.
+                Acceptance rate is accepted out of requests sent. Reply rate is replied out of those messaged. The campaign starts with a connection request, so anyone already connected to you is stopped; message them directly instead.
               </p>
             </section>
           )}

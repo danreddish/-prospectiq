@@ -482,7 +482,7 @@ export default function HeyReachTest({
         <section className="border border-brand-charcoal rounded-lg p-5">
           <div className="flex items-center justify-between">
             <h2 className="text-brand-cream font-semibold">4. What HeyReach returned</h2>
-            <Link href="/dashboard/heyreach/pipeline" className="text-brand-rose-gold text-xs font-semibold hover:underline">
+            <Link href="/dashboard/linkedin" className="text-brand-rose-gold text-xs font-semibold hover:underline">
               See the pipeline &rarr;
             </Link>
           </div>

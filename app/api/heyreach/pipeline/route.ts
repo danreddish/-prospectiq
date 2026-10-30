@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireHeyReachAdmin } from '@/lib/heyreach-route'
+import { createClient } from '@/lib/supabase/server'
+import { isAdmin } from '@/lib/admin'
+import { assignedCampaignIds, visibleCampaigns } from '@/lib/heyreach-access'
 import { heyReachKeyIsSet, listHeyReachCampaigns, getCampaignLeads, getOverallStats, type HeyReachCampaignSummary } from '@/lib/heyreach'
 import { HEYREACH_TEST_CAMPAIGN } from '@/lib/heyreach-shared'
 import { companyChanged, funnelFrom, leadStage, STAGE_LABELS, type PipelineActivity, type PipelineStage } from '@/lib/heyreach-pipeline'
 import { cleanPersonName } from '@/lib/names'
 import { linkedInProfileSlug } from '@/lib/linkedin'
-import type { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,8 +15,10 @@ export const dynamic = 'force-dynamic'
 //   - activity: what HeyReach did in the last 7, 30 or 90 days (GetOverallStats)
 //   - leads: each person's stage, matched to their ProspectIQ prospect when
 //     ProspectIQ sent them
-// Admin only, like the rest of the HeyReach work: there is one HeyReach key,
-// and it is Dan's account.
+// Every signed-in user, limited to the HeyReach campaigns assigned to them
+// (heyreach_campaign_access). There is one HeyReach key, Dan's: he runs the
+// campaigns for clients. Admins see every campaign. Nobody else is told the
+// names or numbers of a campaign they weren't given.
 
 const NO_STORE = { headers: { 'Cache-Control': 'no-store' } }
 const PERIODS = [7, 30, 90]
@@ -67,27 +70,39 @@ async function prospectMatches(supabase: ReturnType<typeof createClient>, userId
   return map
 }
 
-function pickCampaign(campaigns: HeyReachCampaignSummary[], wantedId: number | null): HeyReachCampaignSummary | null {
+function pickCampaign(campaigns: HeyReachCampaignSummary[], wantedId: number | null, admin: boolean): HeyReachCampaignSummary | null {
   if (wantedId) {
     const found = campaigns.find((c) => c.id === wantedId)
     if (found) return found
   }
   return (
-    campaigns.find((c) => c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) ||
+    (admin ? campaigns.find((c) => c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) : undefined) ||
     campaigns.find((c) => c.status !== 'DRAFT') ||
     campaigns[0] ||
     null
   )
 }
 
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export async function GET(req: NextRequest) {
   const startedAt = Date.now()
   const deadline = startedAt + DEADLINE_MS
-  const auth = await requireHeyReachAdmin()
-  if (auth.response) return auth.response
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401, ...NO_STORE })
+  const admin = isAdmin(user.email)
+  // Raw HeyReach errors are for the admin. Everyone else gets a plain line.
+  const say = (detail: string) => (admin ? detail : 'Could not load your LinkedIn pipeline just now. Try again in a minute.')
 
+  const allowed = admin ? null : await assignedCampaignIds(supabase, user.id)
+  if (allowed && allowed.length === 0) {
+    return NextResponse.json({ admin, notSetUp: true, campaigns: [], campaign: null }, NO_STORE)
+  }
   if (!heyReachKeyIsSet()) {
-    return NextResponse.json({ problem: 'HEYREACH_API_KEY is not set in Netlify.' }, NO_STORE)
+    return NextResponse.json({ admin, problem: say('HEYREACH_API_KEY is not set in Netlify.') }, NO_STORE)
   }
 
   const params = new URL(req.url).searchParams
@@ -99,11 +114,18 @@ export async function GET(req: NextRequest) {
   try {
     campaigns = await listHeyReachCampaigns(3500)
   } catch (err) {
-    return NextResponse.json({ problem: `Could not reach HeyReach: ${err instanceof Error ? err.message : err}` }, { status: 502, ...NO_STORE })
+    return NextResponse.json({ admin, problem: say(`Could not reach HeyReach: ${errorText(err)}`) }, { status: 502, ...NO_STORE })
   }
-  const campaign = pickCampaign(campaigns, wantedId)
+  // A user only ever sees the campaigns assigned to them, enforced here.
+  campaigns = visibleCampaigns(campaigns, allowed)
+  const campaign = pickCampaign(campaigns, wantedId, admin)
   if (!campaign) {
-    return NextResponse.json({ campaigns, campaign: null, days, problem: 'There are no campaigns in HeyReach yet.' }, NO_STORE)
+    return NextResponse.json(
+      admin
+        ? { admin, campaigns, campaign: null, days, problem: 'There are no campaigns in HeyReach yet.' }
+        : { admin, notSetUp: true, campaigns: [], campaign: null },
+      NO_STORE
+    )
   }
 
   const end = new Date()
@@ -111,13 +133,13 @@ export async function GET(req: NextRequest) {
   const [leadsRes, statsRes, matchRes] = await Promise.allSettled([
     getCampaignLeads(campaign.id, { deadline: deadline - 300 }),
     getOverallStats([campaign.id], start, end, Math.max(1500, Math.min(4500, deadline - Date.now() - 500))),
-    prospectMatches(auth.supabase, auth.user.id),
+    prospectMatches(supabase, user.id),
   ])
 
   const matches = matchRes.status === 'fulfilled' ? matchRes.value : new Map<string, ProspectMatch>()
-  const leadsError = leadsRes.status === 'rejected' ? String(leadsRes.reason instanceof Error ? leadsRes.reason.message : leadsRes.reason) : null
+  const leadsError = leadsRes.status === 'rejected' ? say(errorText(leadsRes.reason)) : null
   const activity: PipelineActivity | null = statsRes.status === 'fulfilled' ? statsRes.value : null
-  const activityError = statsRes.status === 'rejected' ? String(statsRes.reason instanceof Error ? statsRes.reason.message : statsRes.reason) : null
+  const activityError = statsRes.status === 'rejected' ? say(errorText(statsRes.reason)) : null
 
   const rawLeads = leadsRes.status === 'fulfilled' ? leadsRes.value.leads : []
   const leads = rawLeads
@@ -144,11 +166,12 @@ export async function GET(req: NextRequest) {
 
   const funnel = funnelFrom(rawLeads)
   console.log(
-    `[Pipeline] ${campaign.name} (${campaign.id}, ${campaign.status}): ${funnel.inCampaign} leads, ${funnel.requestsSent} requests, ${funnel.accepted} accepted, ${funnel.messaged} messaged, ${funnel.replied} replied${leadsError ? `; leads failed: ${leadsError}` : ''}${activityError ? `; stats failed: ${activityError}` : ''}. ${Date.now() - startedAt}ms`
+    `[Pipeline] ${admin ? 'admin' : user.id} ${campaign.name} (${campaign.id}, ${campaign.status}): ${funnel.inCampaign} leads, ${funnel.requestsSent} requests, ${funnel.accepted} accepted, ${funnel.messaged} messaged, ${funnel.replied} replied${leadsRes.status === 'rejected' ? `; leads failed: ${errorText(leadsRes.reason)}` : ''}${statsRes.status === 'rejected' ? `; stats failed: ${errorText(statsRes.reason)}` : ''}. ${Date.now() - startedAt}ms`
   )
 
   return NextResponse.json(
     {
+      admin,
       campaigns,
       campaign,
       days,

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { parseCsv } from '@/lib/csv'
 import { linkedInProfileSlug } from '@/lib/linkedin'
 import { HEYREACH_TEST_CAMPAIGN } from '@/lib/heyreach-shared'
+import PipelineAccess from './pipeline-access'
 
 interface CampaignCheck {
   keySet: boolean
@@ -134,7 +135,7 @@ export default function HeyReachSetup({
         <p className="text-brand-beige text-sm mt-1">
           Send approved prospects and their four LinkedIn messages into HeyReach. Admin only for now.
         </p>
-        <Link href="/dashboard/heyreach/pipeline" className="text-brand-rose-gold text-xs font-semibold hover:underline inline-block mt-2">
+        <Link href="/dashboard/linkedin" className="text-brand-rose-gold text-xs font-semibold hover:underline inline-block mt-2">
           See the LinkedIn pipeline &rarr;
         </Link>
       </div>
@@ -204,6 +205,8 @@ export default function HeyReachSetup({
           ))}
         </div>
       </section>
+
+      <PipelineAccess />
     </div>
   )
 }
