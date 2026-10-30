@@ -64,6 +64,14 @@ export async function POST(req: NextRequest) {
     if (!ok) return NextResponse.json({ error: 'HeyReach rejected that key. Copy it again from the workspace in HeyReach.' }, { status: 400 })
   }
 
+  if (body.action === 'add' || body.action === 'rename') {
+    // One workspace per name, so a retried "Add" can't make a second copy.
+    const { data: same } = await admin.from('heyreach_workspaces').select('id').ilike('name', body.name.replace(/[\\%_]/g, (c) => `\\${c}`))
+    if ((same || []).some((w) => body.action === 'add' || w.id !== body.id)) {
+      return NextResponse.json({ error: `There's already a workspace called "${body.name}".` }, { status: 409 })
+    }
+  }
+
   if (body.action === 'add') {
     const { error } = await admin.rpc('heyreach_workspace_create', { p_name: body.name, p_key: body.key })
     if (error) return NextResponse.json({ error: `Could not save: ${error.message}` }, { status: 500 })
@@ -81,5 +89,7 @@ export async function POST(req: NextRequest) {
     console.log(`[Workspaces] ${auth.user.email} removed workspace ${body.id} and its campaign access`)
   }
 
-  return NextResponse.json({ ok: true, workspaces: await describe() }, NO_STORE)
+  // The page reloads the list (with each key checked) in a separate request,
+  // so this one stays well inside the 10 second limit.
+  return NextResponse.json({ ok: true }, NO_STORE)
 }

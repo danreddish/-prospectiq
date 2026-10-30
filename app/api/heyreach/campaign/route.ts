@@ -15,17 +15,18 @@ export const dynamic = 'force-dynamic'
 // The status changes when the campaign is started, so never cache this.
 const NO_STORE = { headers: { 'Cache-Control': 'no-store' } }
 
+/**
+ * The campaign to check. A campaign asked for by id is that campaign or
+ * nothing: never a silent fallback to another one. With nothing asked for,
+ * an admin starts on "ProspectIQ test" in the main workspace (never a
+ * client's campaign); a client starts on their first running campaign.
+ */
 function pick(campaigns: WorkspaceCampaign[], wantedId: number | null, wantedWorkspace: string | null | undefined, admin: boolean): WorkspaceCampaign | null {
   if (wantedId) {
-    const found = campaigns.find((c) => c.id === wantedId && (wantedWorkspace === undefined || c.workspaceId === wantedWorkspace))
-    if (found) return found
+    return campaigns.find((c) => c.id === wantedId && (wantedWorkspace === undefined || c.workspaceId === wantedWorkspace)) || null
   }
-  return (
-    (admin ? campaigns.find((c) => c.workspaceId === null && c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) : undefined) ||
-    campaigns.find((c) => c.status === 'IN_PROGRESS' || c.status === 'ACTIVE') ||
-    campaigns[0] ||
-    null
-  )
+  if (admin) return campaigns.find((c) => c.workspaceId === null && c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) || null
+  return campaigns.find((c) => c.status === 'IN_PROGRESS' || c.status === 'ACTIVE') || campaigns[0] || null
 }
 
 export async function GET(req: NextRequest) {
@@ -49,10 +50,11 @@ export async function GET(req: NextRequest) {
     const { campaigns, errors } = await userCampaigns(auth.grants)
     const chosen = pick(campaigns, wantedId, wantedWorkspace, auth.admin)
     if (!chosen) {
+      const listProblem = errors.length ? ` Could not list: ${errors.map((e) => `${e.workspaceName}: ${e.error}`).join('; ')}` : ''
       const problem = auth.admin
-        ? errors.length
-          ? `Could not list campaigns: ${errors.map((e) => `${e.workspaceName}: ${e.error}`).join('; ')}`
-          : 'No HeyReach campaigns found.'
+        ? wantedId
+          ? `That campaign isn't available right now.${listProblem}`
+          : `Choose the campaign to send into.${listProblem}`
         : say('No campaign found.')
       return NextResponse.json({ keySet: true, keyValid: true, campaigns, campaign: null, problem }, NO_STORE)
     }

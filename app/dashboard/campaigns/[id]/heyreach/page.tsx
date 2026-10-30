@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
 import { isAdmin } from '@/lib/admin'
 import { linkedInProfileSlug } from '@/lib/linkedin'
-import { campaignGrants } from '@/lib/heyreach-access'
+import { canOpenSendToLinkedIn } from '@/lib/heyreach-route'
 import HeyReachTest, { type TestRow } from './heyreach-test'
 
 export const dynamic = 'force-dynamic'
@@ -14,7 +14,7 @@ export default async function CampaignHeyReachPage({ params }: { params: { id: s
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
   const admin = isAdmin(user.email)
-  if (!admin && (await campaignGrants(supabase, user.id)).length === 0) notFound()
+  if (!(await canOpenSendToLinkedIn(supabase, user.id, user.email))) notFound()
 
   const { data: campaign } = await supabase
     .from('campaigns')

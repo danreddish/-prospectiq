@@ -1385,6 +1385,12 @@ REVOKE ALL ON public.heyreach_workspaces FROM anon, authenticated;
 ALTER TABLE public.heyreach_campaign_access
   ADD COLUMN IF NOT EXISTS workspace_id uuid REFERENCES public.heyreach_workspaces(id) ON DELETE CASCADE;
 
+-- Seeing a campaign's pipeline and sending into it are separate. A campaign
+-- sends from whichever LinkedIn account is attached to it, so sending is off
+-- unless Dan turns it on (existing v78 grants stay view only).
+ALTER TABLE public.heyreach_campaign_access
+  ADD COLUMN IF NOT EXISTS can_send boolean NOT NULL DEFAULT false;
+
 -- ── Server-only functions. The key goes in and comes out only here. ──
 
 CREATE OR REPLACE FUNCTION public.heyreach_workspace_create(p_name text, p_key text)

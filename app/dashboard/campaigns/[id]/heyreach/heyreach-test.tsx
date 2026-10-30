@@ -135,6 +135,10 @@ export default function HeyReachTest({
   useEffect(() => {
     runCheck()
   }, [])
+  // Never confirm a send against a campaign that has since changed.
+  useEffect(() => {
+    setConfirmPush(false)
+  }, [check?.campaign?.id, check?.campaign?.workspaceId])
 
   function updateRow(id: string, heyreach: HeyReachState | undefined, keepDraft = false) {
     if (heyreach) setRows((prev) => prev.map((r) => (r.id === id ? { ...r, heyreach } : r)))
@@ -270,11 +274,12 @@ export default function HeyReachTest({
           <h2 className="text-brand-cream font-semibold">LinkedIn campaign</h2>
           <button onClick={() => runCheck()} className="btn-secondary text-xs px-3 py-1.5">Check again</button>
         </div>
-        {(check?.campaigns?.length || 0) > 1 && (
+        {((check?.campaigns?.length || 0) > 1 || (!check?.campaign && (check?.campaigns?.length || 0) > 0)) && (
           <label className="text-brand-beige text-xs flex items-center gap-2 mt-3">
             Send into
             <select
               value={check?.campaign ? `${check.campaign.workspaceId || 'main'}:${check.campaign.id}` : ''}
+              aria-label="Campaign to send into"
               disabled={!!busy}
               onChange={(e) => {
                 const [ws, id] = e.target.value.split(':')
@@ -283,6 +288,7 @@ export default function HeyReachTest({
               }}
               className="text-sm py-1.5 px-3"
             >
+              {!check?.campaign && <option value="">Choose a campaign</option>}
               {(check?.campaigns || []).map((c) => (
                 <option key={`${c.workspaceId || 'main'}:${c.id}`} value={`${c.workspaceId || 'main'}:${c.id}`}>
                   {admin ? `${c.workspaceName} · ` : ''}
@@ -433,7 +439,7 @@ export default function HeyReachTest({
 
               {status === 'pushing' && (
                 <div className="mt-4">
-                  <button onClick={() => checkStuck(r)} disabled={!!busy || !ready} className="btn-secondary text-xs px-3 py-1.5">
+                  <button onClick={() => checkStuck(r)} disabled={!!busy} className="btn-secondary text-xs px-3 py-1.5">
                     Check HeyReach
                   </button>
                   <p className="text-brand-beige text-xs mt-2">
@@ -500,7 +506,10 @@ export default function HeyReachTest({
         ) : (
           <div className="mt-3">
             <p className="text-brand-cream text-sm">
-              This sends connection requests from your LinkedIn to: {approved.map((r) => cleanPersonName(r.name)).join(', ')}.
+              {admin
+                ? `This sends connection requests from the LinkedIn account on "${check?.campaign?.name}" (${check?.campaign?.workspaceName}) to: `
+                : `This sends connection requests from your LinkedIn, through "${check?.campaign?.name}", to: `}
+              {approved.map((r) => cleanPersonName(r.name)).join(', ')}.
             </p>
             <div className="flex gap-2 mt-2">
               <button onClick={pushApproved} disabled={!canPush} className="btn-primary text-sm">

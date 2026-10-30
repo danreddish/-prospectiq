@@ -12,6 +12,8 @@ export interface CampaignGrant {
   heyreachCampaignId: number
   /** null = the main workspace */
   workspaceId: string | null
+  /** v79: may send into it (otherwise the pipeline only) */
+  canSend: boolean
 }
 
 /**
@@ -23,14 +25,18 @@ export interface CampaignGrant {
 export async function campaignGrants(supabase: ServerClient, userId: string): Promise<CampaignGrant[]> {
   const { data, error } = await supabase
     .from('heyreach_campaign_access')
-    .select('heyreach_campaign_id, workspace_id')
+    .select('heyreach_campaign_id, workspace_id, can_send')
     .eq('user_id', userId)
   if (error) {
     console.warn(`[Access] Could not read campaign access for ${userId}: ${error.message}`)
     return []
   }
   return (data || [])
-    .map((r) => ({ heyreachCampaignId: Number(r.heyreach_campaign_id), workspaceId: (r.workspace_id as string | null) || null }))
+    .map((r) => ({
+      heyreachCampaignId: Number(r.heyreach_campaign_id),
+      workspaceId: (r.workspace_id as string | null) || null,
+      canSend: r.can_send === true,
+    }))
     .filter((g) => Number.isFinite(g.heyreachCampaignId) && g.heyreachCampaignId > 0)
 }
 
@@ -52,3 +58,8 @@ export function workspacesFor(workspaces: HeyReachWorkspace[], grants: CampaignG
 }
 
 export type { WorkspaceCampaign }
+
+/** Only the grants that allow sending (seeing the pipeline needs none of this). */
+export function sendGrants(grants: CampaignGrant[]): CampaignGrant[] {
+  return grants.filter((g) => g.canSend)
+}

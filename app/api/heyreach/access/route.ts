@@ -14,7 +14,9 @@ export const dynamic = 'force-dynamic'
 const NO_STORE = { headers: { 'Cache-Control': 'no-store' } }
 
 const PostSchema = z.object({
-  action: z.enum(['assign', 'remove']),
+  action: z.enum(['assign', 'remove', 'set_send']),
+  // v79: may the user send into it, or only see its pipeline (default: see only)
+  can_send: z.boolean().optional(),
   user_id: z.string().uuid(),
   heyreach_campaign_id: z.number().int().positive(),
   // null or missing = the main workspace
@@ -24,7 +26,7 @@ const PostSchema = z.object({
 async function listAll() {
   const admin = createAdminClient()
   const [accessRes, usersRes] = await Promise.all([
-    admin.from('heyreach_campaign_access').select('user_id, heyreach_campaign_id, workspace_id, campaign_name, assigned_at').order('assigned_at', { ascending: false }),
+    admin.from('heyreach_campaign_access').select('user_id, heyreach_campaign_id, workspace_id, can_send, campaign_name, assigned_at').order('assigned_at', { ascending: false }),
     admin.from('profiles').select('id, email, full_name').order('email', { ascending: true }).limit(1000),
   ])
   if (accessRes.error) {
@@ -40,6 +42,7 @@ async function listAll() {
     name: byId.get(a.user_id as string)?.name || null,
     heyreach_campaign_id: Number(a.heyreach_campaign_id),
     workspace_id: (a.workspace_id as string | null) || null,
+    can_send: a.can_send === true,
     campaign_name: (a.campaign_name as string | null) || null,
     assigned_at: a.assigned_at as string,
   }))
@@ -88,9 +91,20 @@ export async function POST(req: NextRequest) {
     if (!profile) return NextResponse.json({ error: 'That user does not exist.' }, { status: 400 })
     const { error } = await admin
       .from('heyreach_campaign_access')
-      .upsert({ user_id, heyreach_campaign_id, workspace_id: workspaceId, campaign_name: campaign.name, assigned_at: new Date().toISOString() }, { onConflict: 'user_id,heyreach_campaign_id' })
+      .upsert(
+        { user_id, heyreach_campaign_id, workspace_id: workspaceId, can_send: parsed.data.can_send === true, campaign_name: campaign.name, assigned_at: new Date().toISOString() },
+        { onConflict: 'user_id,heyreach_campaign_id' }
+      )
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    console.log(`[Access] ${auth.user.email} gave ${profile.email} the HeyReach campaign "${campaign.name}" (${campaign.id}) in "${workspace.name}"`)
+    console.log(`[Access] ${auth.user.email} gave ${profile.email} the HeyReach campaign "${campaign.name}" (${campaign.id}) in "${workspace.name}"${parsed.data.can_send ? ', can send' : ', view only'}`)
+  } else if (action === 'set_send') {
+    const { error } = await admin
+      .from('heyreach_campaign_access')
+      .update({ can_send: parsed.data.can_send === true })
+      .eq('user_id', user_id)
+      .eq('heyreach_campaign_id', heyreach_campaign_id)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    console.log(`[Access] ${auth.user.email} set sending ${parsed.data.can_send ? 'on' : 'off'} for user ${user_id}, campaign ${heyreach_campaign_id}`)
   } else {
     const { error } = await admin.from('heyreach_campaign_access').delete().eq('user_id', user_id).eq('heyreach_campaign_id', heyreach_campaign_id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

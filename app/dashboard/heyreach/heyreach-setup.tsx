@@ -188,7 +188,7 @@ export default function HeyReachSetup({
             {check.problem ? (
               <p className="text-red-400">{check.problem}</p>
             ) : (
-              <p className="text-green-400">Ready. New leads will go into &ldquo;{HEYREACH_TEST_CAMPAIGN}&rdquo;.</p>
+              <p className="text-green-400">Ready. Your own sends go into &ldquo;{check.campaign?.name || HEYREACH_TEST_CAMPAIGN}&rdquo; unless you choose another campaign on the Send to LinkedIn page.</p>
             )}
           </div>
         )}

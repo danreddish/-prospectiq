@@ -8,7 +8,8 @@ import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { isAdmin } from '@/lib/admin'
 import { linkedInProfileSlug } from '@/lib/linkedin'
 import { HEYREACH_MESSAGE_FIELDS, type HeyReachState, type HeyReachStatus } from '@/lib/heyreach-shared'
-import { campaignGrants, visibleCampaigns, workspacesFor, type CampaignGrant } from '@/lib/heyreach-access'
+import { campaignGrants, sendGrants, visibleCampaigns, workspacesFor, type CampaignGrant } from '@/lib/heyreach-access'
+import { ACCESS_COLUMNS, accessMessage, planAccess, type AccessProfile } from '@/lib/access'
 import { campaignsAcrossWorkspaces, listWorkspaces, type WorkspaceCampaign } from '@/lib/heyreach-workspaces'
 
 type ServerClient = ReturnType<typeof createClient>
@@ -27,8 +28,10 @@ export async function requireHeyReachAdmin(): Promise<
 
 /**
  * v79: someone who may write, approve and send LinkedIn messages: an admin,
- * or a user with at least one HeyReach campaign assigned. Everyone else gets
- * a 404. grants is null for an admin (every campaign).
+ * or a user with an active plan and at least one HeyReach campaign they may
+ * send into (can_send). A pipeline-only grant doesn't count. Everyone else
+ * gets a 404 (or a 403 saying their plan has ended). grants is null for an
+ * admin (every campaign); otherwise it holds only the send grants.
  */
 export async function requireHeyReachSender(): Promise<
   { supabase: ServerClient; user: User; admin: boolean; grants: CampaignGrant[] | null; response?: undefined } | { response: NextResponse }
@@ -37,9 +40,22 @@ export async function requireHeyReachSender(): Promise<
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
   if (isAdmin(user.email)) return { supabase, user, admin: true, grants: null }
-  const grants = await campaignGrants(supabase, user.id)
+  const grants = sendGrants(await campaignGrants(supabase, user.id))
   if (grants.length === 0) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+  const { data: profile } = await supabase.from('profiles').select(ACCESS_COLUMNS).eq('id', user.id).single()
+  const reason = profile ? planAccess(profile as AccessProfile) : 'no_plan'
+  if (reason !== 'ok') {
+    return { response: NextResponse.json({ error: accessMessage(reason).replace('research prospects', 'send LinkedIn messages').replace('researching prospects', 'sending LinkedIn messages') }, { status: 403 }) }
+  }
   return { supabase, user, admin: false, grants }
+}
+
+/** Whether this user may open Send to LinkedIn (pages use this; routes use requireHeyReachSender). */
+export async function canOpenSendToLinkedIn(supabase: ServerClient, userId: string, email: string | null | undefined): Promise<boolean> {
+  if (isAdmin(email)) return true
+  if (sendGrants(await campaignGrants(supabase, userId)).length === 0) return false
+  const { data: profile } = await supabase.from('profiles').select(ACCESS_COLUMNS).eq('id', userId).single()
+  return !!profile && planAccess(profile as AccessProfile) === 'ok'
 }
 
 /**
@@ -52,10 +68,10 @@ export async function userCampaigns(grants: CampaignGrant[] | null): Promise<{ c
   return { campaigns: visibleCampaigns(campaigns, grants), errors }
 }
 
-/** True when this person may send into this campaign in this workspace. */
+/** True when this person may send into this campaign in this workspace (a can_send grant, or admin). */
 export function maySendInto(grants: CampaignGrant[] | null, heyreachCampaignId: number, workspaceId: string | null): boolean {
   if (grants === null) return true
-  return grants.some((g) => g.heyreachCampaignId === heyreachCampaignId && g.workspaceId === workspaceId)
+  return grants.some((g) => g.canSend && g.heyreachCampaignId === heyreachCampaignId && g.workspaceId === workspaceId)
 }
 
 export interface TestProspect {

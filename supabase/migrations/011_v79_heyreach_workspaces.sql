@@ -10,7 +10,8 @@
 -- server (service role) can, through the functions below.
 --
 -- heyreach_campaign_access.workspace_id says which workspace an assigned
--- campaign lives in (NULL = the main workspace).
+-- campaign lives in (NULL = the main workspace); can_send says whether the
+-- user may send into it, or only see its pipeline.
 --
 -- Idempotent. Run BEFORE merging v79.
 -- ============================================
@@ -30,6 +31,12 @@ REVOKE ALL ON public.heyreach_workspaces FROM anon, authenticated;
 
 ALTER TABLE public.heyreach_campaign_access
   ADD COLUMN IF NOT EXISTS workspace_id uuid REFERENCES public.heyreach_workspaces(id) ON DELETE CASCADE;
+
+-- Seeing a campaign's pipeline and sending into it are separate. A campaign
+-- sends from whichever LinkedIn account is attached to it, so sending is off
+-- unless Dan turns it on (existing v78 grants stay view only).
+ALTER TABLE public.heyreach_campaign_access
+  ADD COLUMN IF NOT EXISTS can_send boolean NOT NULL DEFAULT false;
 
 -- ── Server-only functions. The key goes in and comes out only here. ──
 

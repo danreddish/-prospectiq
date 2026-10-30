@@ -21,7 +21,7 @@ async function send(body: unknown) {
   const res = await fetch('/api/heyreach/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(json.error || 'Could not save')
-  return json as { workspaces: Workspace[] }
+  return json as { ok: boolean }
 }
 
 export default function WorkspacesAdmin({ onChange }: { onChange?: () => void }) {
@@ -52,9 +52,9 @@ export default function WorkspacesAdmin({ onChange }: { onChange?: () => void })
   async function run(body: Record<string, unknown>, done: string) {
     setSaving(true)
     try {
-      const json = await send(body)
-      setWorkspaces(json.workspaces)
+      await send(body)
       toast.success(done)
+      await load()
       onChange?.()
       return true
     } catch (err) {
