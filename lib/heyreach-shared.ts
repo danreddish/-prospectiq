@@ -31,6 +31,8 @@ export type HeyReachStatus = 'draft' | 'approved' | 'rejected' | 'pushing' | 'pu
 
 export interface HeyReachPushRecord {
   at: string
+  /** v79: the HeyReach workspace (null = main workspace) */
+  heyreach_workspace_id?: string | null
   heyreach_campaign_id: number
   heyreach_campaign_name: string
   heyreach_campaign_status: string
@@ -62,6 +64,8 @@ export interface HeyReachState {
   pushing_at?: string
   push?: HeyReachPushRecord
   push_error?: string
+  /** v79: where a push in progress is going, so a stuck push is checked in the same workspace */
+  push_target?: { heyreach_campaign_id: number; workspace_id: string | null }
 }
 
 const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'prof', 'professor', 'sir', 'dame', 'lord', 'lady', 'rev'])

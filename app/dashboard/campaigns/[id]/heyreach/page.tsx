@@ -2,16 +2,19 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
 import { isAdmin } from '@/lib/admin'
 import { linkedInProfileSlug } from '@/lib/linkedin'
+import { campaignGrants } from '@/lib/heyreach-access'
 import HeyReachTest, { type TestRow } from './heyreach-test'
 
 export const dynamic = 'force-dynamic'
 
-// v77: admin-only HeyReach test for one campaign.
+// v77: HeyReach test for one campaign. v79: "Send to LinkedIn", for admins and
+// for users with a HeyReach campaign assigned (the API routes enforce it too).
 export default async function CampaignHeyReachPage({ params }: { params: { id: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
-  if (!isAdmin(user.email)) notFound()
+  const admin = isAdmin(user.email)
+  if (!admin && (await campaignGrants(supabase, user.id)).length === 0) notFound()
 
   const { data: campaign } = await supabase
     .from('campaigns')
@@ -50,6 +53,7 @@ export default async function CampaignHeyReachPage({ params }: { params: { id: s
 
   return (
     <HeyReachTest
+      admin={admin}
       campaign={{ id: campaign.id, name: campaign.name, customInstructions: campaign.custom_instructions || null }}
       initialRows={(rows || []) as TestRow[]}
       excludedBySlug={excluded}

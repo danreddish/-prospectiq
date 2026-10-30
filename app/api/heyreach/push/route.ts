@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server'
 import { canonicalProfileUrl, linkedInProfileSlug } from '@/lib/linkedin'
 import {
-  requireHeyReachAdmin,
+  requireHeyReachSender,
+  maySendInto,
   loadTestProspect,
   exclusionFor,
   exclusionMessage,
@@ -11,8 +12,6 @@ import {
   saveHeyReachIf,
 } from '@/lib/heyreach-route'
 import {
-  heyReachKeyIsSet,
-  findHeyReachCampaign,
   getHeyReachCampaign,
   campaignProblem,
   addLeadToHeyReach,
@@ -22,8 +21,8 @@ import {
   leadWarnings,
   type HeyReachCampaign,
 } from '@/lib/heyreach'
+import { workspaceKey } from '@/lib/heyreach-workspaces'
 import {
-  HEYREACH_TEST_CAMPAIGN,
   HEYREACH_MESSAGE_FIELDS,
   pushProblems,
   type HeyReachMessages,
@@ -31,8 +30,13 @@ import {
   type HeyReachState,
 } from '@/lib/heyreach-shared'
 
-// v77: pushes ONE approved person into the live HeyReach campaign
-// "ProspectIQ test", with msg_1 to msg_4 as custom variables.
+// v77: pushes ONE approved person into a live HeyReach campaign, with msg_1
+// to msg_4 as custom variables.
+// v79: admins and users with a campaign assigned. The target campaign comes
+// from the page; a user may only send into a campaign assigned to them (in
+// the workspace it was assigned from), checked here. Each workspace uses its
+// own HeyReach key. The target is stored with the claim, so a stuck push is
+// checked in the same workspace.
 //
 // Adding a lead to a running campaign starts its sequence (the blank
 // connection request goes out), so:
@@ -52,8 +56,9 @@ import {
 const Schema = z.object({
   campaign_id: z.string().uuid(),
   prospect_id: z.string().uuid(),
-  // From the campaign check on the page. Saves looking the campaign up by name.
-  heyreach_campaign_id: z.number().int().positive().optional(),
+  // The HeyReach campaign chosen on the page, and its workspace (null = main).
+  heyreach_campaign_id: z.number().int().positive(),
+  heyreach_workspace_id: z.string().uuid().nullable().optional(),
 })
 
 const DEADLINE_MS = 9000
@@ -76,12 +81,12 @@ function trimBody(body: unknown): unknown {
 export async function POST(req: NextRequest) {
   const startedAt = Date.now()
   const left = () => DEADLINE_MS - (Date.now() - startedAt)
-  const auth = await requireHeyReachAdmin()
+  const auth = await requireHeyReachSender()
   if (auth.response) return auth.response
 
   const parsed = Schema.safeParse(await req.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 })
-  const { campaign_id, prospect_id, heyreach_campaign_id } = parsed.data
+  const { campaign_id, prospect_id } = parsed.data
 
   const loaded = await loadTestProspect(auth.supabase, auth.user.id, campaign_id, prospect_id)
   if (loaded.response) return loaded.response
@@ -100,6 +105,20 @@ export async function POST(req: NextRequest) {
   }
   if (state.status !== 'approved' && !stuck) {
     return reply(409, { error: 'Approve this person before sending.', heyreach: state })
+  }
+
+  // ── Where to send. A stuck push keeps the target it was claimed with. ──
+  const target = stuck && state.push_target
+    ? state.push_target
+    : { heyreach_campaign_id: parsed.data.heyreach_campaign_id, workspace_id: parsed.data.heyreach_workspace_id ?? null }
+  if (!maySendInto(auth.grants, target.heyreach_campaign_id, target.workspace_id)) {
+    return reply(403, { error: "You can't send into that campaign. Ask Dan to give you access.", heyreach: state })
+  }
+  let apiKey: string | undefined
+  try {
+    apiKey = await workspaceKey(target.workspace_id)
+  } catch (err) {
+    return reply(503, { error: err instanceof Error ? err.message : 'Could not read the HeyReach key.', heyreach: state })
   }
 
   // ── Re-check everything on the server (not needed to look a stuck push up) ──
@@ -121,10 +140,10 @@ export async function POST(req: NextRequest) {
       return reply(503, { error: err instanceof Error ? err.message : 'Exclusion check failed', heyreach: state })
     }
   }
-  if (!heyReachKeyIsSet()) return reply(503, { error: 'HEYREACH_API_KEY is not set in Netlify yet.', heyreach: state })
+  if (!apiKey && !process.env.HEYREACH_API_KEY) return reply(503, { error: 'HEYREACH_API_KEY is not set in Netlify yet.', heyreach: state })
 
   // ── Claim the person ──
-  const pushing: HeyReachState = { ...state, status: 'pushing', pushing_at: new Date().toISOString(), push_error: undefined }
+  const pushing: HeyReachState = { ...state, status: 'pushing', pushing_at: new Date().toISOString(), push_error: undefined, push_target: target }
   // A normal claim must match the exact approved text (fingerprint).
   const claimed = stuck
     ? await saveHeyReachIf(prospect.id, userId, ['pushing'], pushing, new Date(Date.now() - STUCK_AFTER_MS).toISOString())
@@ -138,21 +157,14 @@ export async function POST(req: NextRequest) {
     return reply(status, { error, heyreach: back })
   }
 
-  // ── The campaign ──
+  // ── The campaign (in its own workspace) ──
   let campaign: HeyReachCampaign | null = null
   try {
-    if (heyreach_campaign_id) {
-      campaign = await getHeyReachCampaign(heyreach_campaign_id)
-      if (campaign && campaign.name.trim().toLowerCase() !== HEYREACH_TEST_CAMPAIGN.toLowerCase()) {
-        return await release(`HeyReach campaign ${heyreach_campaign_id} is "${campaign.name}", not "${HEYREACH_TEST_CAMPAIGN}".`, 409)
-      }
-    } else {
-      campaign = await findHeyReachCampaign(HEYREACH_TEST_CAMPAIGN)
-    }
+    campaign = await getHeyReachCampaign(target.heyreach_campaign_id, 3000, apiKey)
   } catch (err) {
     return await release(err instanceof Error ? err.message : 'Could not reach HeyReach.', 502)
   }
-  const problem = campaignProblem(campaign, HEYREACH_TEST_CAMPAIGN)
+  const problem = campaignProblem(campaign, campaign?.name || `campaign ${target.heyreach_campaign_id}`)
   if (problem || !campaign) return await release(problem || 'HeyReach campaign not found.', 409)
   const linkedInAccountId = campaign.accountIds[0]
 
@@ -179,6 +191,7 @@ export async function POST(req: NextRequest) {
   }
 
   const baseRecord = {
+    heyreach_workspace_id: target.workspace_id,
     heyreach_campaign_id: campaign.id,
     heyreach_campaign_name: campaign.name,
     heyreach_campaign_status: campaign.status,
@@ -189,7 +202,7 @@ export async function POST(req: NextRequest) {
   if (stuck) {
     let lead
     try {
-      lead = await getHeyReachLead(profileUrl, Math.min(3000, left() - 1000))
+      lead = await getHeyReachLead(profileUrl, Math.min(3000, left() - 1000), apiKey)
     } catch (err) {
       return reply(503, { error: `Could not check HeyReach: ${err instanceof Error ? err.message : err}. Try again in a moment.`, heyreach: pushing })
     }
@@ -230,7 +243,8 @@ export async function POST(req: NextRequest) {
         location: prospect.location,
         messages,
       },
-      Math.min(6000, left() - 1200)
+      Math.min(6000, left() - 1200),
+      apiKey
     )
   } catch (err) {
     // HeyReach may have taken the lead before the connection dropped.
@@ -279,7 +293,7 @@ export async function POST(req: NextRequest) {
     let readBack: HeyReachPushRecord['read_back']
     if (left() > 2500) {
       try {
-        const lead = await getHeyReachLead(profileUrl, Math.min(3000, left() - 1000))
+        const lead = await getHeyReachLead(profileUrl, Math.min(3000, left() - 1000), apiKey)
         readBack = readBackFrom(lead)
         if (readBack.warnings?.length) console.warn(`[HeyReach] ${prospect.name}: ${readBack.warnings.join(' ')}`)
       } catch (err) {

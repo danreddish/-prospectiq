@@ -7,6 +7,7 @@ import { parseCsv } from '@/lib/csv'
 import { linkedInProfileSlug } from '@/lib/linkedin'
 import { HEYREACH_TEST_CAMPAIGN } from '@/lib/heyreach-shared'
 import PipelineAccess from './pipeline-access'
+import WorkspacesAdmin from './workspaces-admin'
 
 interface CampaignCheck {
   keySet: boolean
@@ -26,6 +27,7 @@ export default function HeyReachSetup({
   const [uploading, setUploading] = useState(false)
   const [uploadNote, setUploadNote] = useState('')
   const [check, setCheck] = useState<CampaignCheck | null>(null)
+  const [accessVersion, setAccessVersion] = useState(0)
   const [checking, setChecking] = useState(false)
 
   async function runCheck() {
@@ -193,20 +195,22 @@ export default function HeyReachSetup({
       </section>
 
       <section className="border border-brand-charcoal rounded-lg p-5">
-        <h2 className="text-brand-cream font-semibold">3. Run a test from a campaign</h2>
+        <h2 className="text-brand-cream font-semibold">3. Send from one of your campaigns</h2>
         <p className="text-brand-beige text-sm mt-1">Pick the campaign whose researched prospects you want to send.</p>
         <div className="mt-3 divide-y divide-brand-charcoal border border-brand-charcoal rounded-lg">
           {campaigns.length === 0 && <p className="p-4 text-brand-beige text-sm">No campaigns yet.</p>}
           {campaigns.map((c) => (
             <Link key={c.id} href={`/dashboard/campaigns/${c.id}/heyreach`} className="flex justify-between p-3 text-sm hover:bg-brand-charcoal-deep/40">
               <span className="text-brand-cream">{c.name}</span>
-              <span className="text-brand-rose-gold text-xs font-semibold">Open HeyReach test</span>
+              <span className="text-brand-rose-gold text-xs font-semibold">Open Send to LinkedIn</span>
             </Link>
           ))}
         </div>
       </section>
 
-      <PipelineAccess />
+      <WorkspacesAdmin onChange={() => setAccessVersion((v) => v + 1)} />
+
+      <PipelineAccess key={accessVersion} />
     </div>
   )
 }

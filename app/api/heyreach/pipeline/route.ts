@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { isAdmin } from '@/lib/admin'
-import { assignedCampaignIds, visibleCampaigns } from '@/lib/heyreach-access'
-import { heyReachKeyIsSet, listHeyReachCampaigns, getCampaignLeads, getOverallStats, type HeyReachCampaignSummary } from '@/lib/heyreach'
+import { campaignGrants } from '@/lib/heyreach-access'
+import { getCampaignLeads, getOverallStats } from '@/lib/heyreach'
+import { userCampaigns } from '@/lib/heyreach-route'
+import { workspaceKey, type WorkspaceCampaign } from '@/lib/heyreach-workspaces'
 import { HEYREACH_TEST_CAMPAIGN } from '@/lib/heyreach-shared'
 import { companyChanged, funnelFrom, leadStage, STAGE_LABELS, type PipelineActivity, type PipelineStage } from '@/lib/heyreach-pipeline'
 import { cleanPersonName } from '@/lib/names'
@@ -16,9 +18,10 @@ export const dynamic = 'force-dynamic'
 //   - leads: each person's stage, matched to their ProspectIQ prospect when
 //     ProspectIQ sent them
 // Every signed-in user, limited to the HeyReach campaigns assigned to them
-// (heyreach_campaign_access). There is one HeyReach key, Dan's: he runs the
-// campaigns for clients. Admins see every campaign. Nobody else is told the
-// names or numbers of a campaign they weren't given.
+// (heyreach_campaign_access). Dan runs the campaigns for clients, one
+// HeyReach workspace each (v79: each workspace's own key). Admins see every
+// campaign in every workspace. Nobody else is told the names or numbers of a
+// campaign they weren't given.
 
 const NO_STORE = { headers: { 'Cache-Control': 'no-store' } }
 const PERIODS = [7, 30, 90]
@@ -70,13 +73,13 @@ async function prospectMatches(supabase: ReturnType<typeof createClient>, userId
   return map
 }
 
-function pickCampaign(campaigns: HeyReachCampaignSummary[], wantedId: number | null, admin: boolean): HeyReachCampaignSummary | null {
+function pickCampaign(campaigns: WorkspaceCampaign[], wantedId: number | null, admin: boolean): WorkspaceCampaign | null {
   if (wantedId) {
     const found = campaigns.find((c) => c.id === wantedId)
     if (found) return found
   }
   return (
-    (admin ? campaigns.find((c) => c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) : undefined) ||
+    (admin ? campaigns.find((c) => c.workspaceId === null && c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) : undefined) ||
     campaigns.find((c) => c.status !== 'DRAFT') ||
     campaigns[0] ||
     null
@@ -97,12 +100,9 @@ export async function GET(req: NextRequest) {
   // Raw HeyReach errors are for the admin. Everyone else gets a plain line.
   const say = (detail: string) => (admin ? detail : 'Could not load your LinkedIn pipeline just now. Try again in a minute.')
 
-  const allowed = admin ? null : await assignedCampaignIds(supabase, user.id)
-  if (allowed && allowed.length === 0) {
+  const grants = admin ? null : await campaignGrants(supabase, user.id)
+  if (grants && grants.length === 0) {
     return NextResponse.json({ admin, notSetUp: true, campaigns: [], campaign: null }, NO_STORE)
-  }
-  if (!heyReachKeyIsSet()) {
-    return NextResponse.json({ admin, problem: say('HEYREACH_API_KEY is not set in Netlify.') }, NO_STORE)
   }
 
   const params = new URL(req.url).searchParams
@@ -110,14 +110,12 @@ export async function GET(req: NextRequest) {
   const days = PERIODS.includes(daysParam) ? daysParam : 30
   const wantedId = Number(params.get('campaign_id')) || null
 
-  let campaigns: HeyReachCampaignSummary[]
-  try {
-    campaigns = await listHeyReachCampaigns(3500)
-  } catch (err) {
-    return NextResponse.json({ admin, problem: say(`Could not reach HeyReach: ${errorText(err)}`) }, { status: 502, ...NO_STORE })
+  // A user only ever sees the campaigns assigned to them, enforced here: only
+  // their workspaces are read, and only their campaigns are kept.
+  const { campaigns, errors } = await userCampaigns(grants)
+  if (campaigns.length === 0 && errors.length) {
+    return NextResponse.json({ admin, problem: say(`Could not reach HeyReach: ${errors.map((e) => `${e.workspaceName}: ${e.error}`).join('; ')}`) }, { status: 502, ...NO_STORE })
   }
-  // A user only ever sees the campaigns assigned to them, enforced here.
-  campaigns = visibleCampaigns(campaigns, allowed)
   const campaign = pickCampaign(campaigns, wantedId, admin)
   if (!campaign) {
     return NextResponse.json(
@@ -128,11 +126,17 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  let apiKey: string | undefined
+  try {
+    apiKey = await workspaceKey(campaign.workspaceId)
+  } catch (err) {
+    return NextResponse.json({ admin, problem: say(errorText(err)) }, { status: 502, ...NO_STORE })
+  }
   const end = new Date()
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000)
   const [leadsRes, statsRes, matchRes] = await Promise.allSettled([
-    getCampaignLeads(campaign.id, { deadline: deadline - 300 }),
-    getOverallStats([campaign.id], start, end, Math.max(1500, Math.min(4500, deadline - Date.now() - 500))),
+    getCampaignLeads(campaign.id, { deadline: deadline - 300, apiKey }),
+    getOverallStats([campaign.id], start, end, Math.max(1500, Math.min(4500, deadline - Date.now() - 500)), apiKey),
     prospectMatches(supabase, user.id),
   ])
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { linkedInProfileSlug } from '@/lib/linkedin'
 import {
-  requireHeyReachAdmin,
+  requireHeyReachSender,
   loadTestProspect,
   exclusionFor,
   exclusionMessage,
@@ -38,7 +38,7 @@ const Schema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const auth = await requireHeyReachAdmin()
+  const auth = await requireHeyReachSender()
   if (auth.response) return auth.response
 
   const parsed = Schema.safeParse(await req.json().catch(() => null))

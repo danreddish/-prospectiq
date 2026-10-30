@@ -17,6 +17,8 @@ interface Assignment {
   email: string
   name: string | null
   heyreach_campaign_id: number
+  workspace_id: string | null
+  workspace_name?: string
   campaign_name: string | null
   assigned_at: string
 }
@@ -25,6 +27,8 @@ interface Campaign {
   id: number
   name: string
   status: string
+  workspaceId: string | null
+  workspaceName: string
 }
 
 export default function PipelineAccess() {
@@ -58,17 +62,17 @@ export default function PipelineAccess() {
     load()
   }, [])
 
-  async function change(action: 'assign' | 'remove', uid: string, cid: number) {
+  async function change(action: 'assign' | 'remove', uid: string, cid: number, workspaceId: string | null) {
     setSaving(true)
     try {
       const res = await fetch('/api/heyreach/access', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, user_id: uid, heyreach_campaign_id: cid }),
+        body: JSON.stringify({ action, user_id: uid, heyreach_campaign_id: cid, workspace_id: workspaceId }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error || 'Could not save')
-      if (json.assignments) setAssignments(json.assignments)
+      if (json.assignments) load()
       if (json.users) setUsers(json.users)
       toast.success(action === 'assign' ? 'Campaign assigned' : 'Access removed')
       if (action === 'assign') setCampaignId('')
@@ -83,9 +87,9 @@ export default function PipelineAccess() {
 
   return (
     <section className="border border-brand-charcoal rounded-lg p-5">
-      <h2 className="text-brand-cream font-semibold">4. Who sees which LinkedIn pipeline</h2>
+      <h2 className="text-brand-cream font-semibold">5. Who sees and sends into which campaign</h2>
       <p className="text-brand-beige text-sm mt-1">
-        Each user sees the LinkedIn pipeline only for the HeyReach campaigns you give them here. Nothing else in your HeyReach account is shown to them.
+        Give a user a HeyReach campaign and they get its LinkedIn pipeline, and can send their own approved prospects into it from Send to LinkedIn. They see nothing else in HeyReach.
       </p>
 
       {loading && <p className="text-brand-beige text-sm mt-3">Loading...</p>}
@@ -110,14 +114,17 @@ export default function PipelineAccess() {
               <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)} className="text-sm py-2 px-3 min-w-[14rem]">
                 <option value="">Choose a campaign</option>
                 {campaigns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.status.toLowerCase().replace(/_/g, ' ')})
+                  <option key={`${c.workspaceId || 'main'}:${c.id}`} value={`${c.workspaceId || 'main'}:${c.id}`}>
+                    {c.workspaceName} · {c.name} ({c.status.toLowerCase().replace(/_/g, ' ')})
                   </option>
                 ))}
               </select>
             </label>
             <button
-              onClick={() => change('assign', userId, Number(campaignId))}
+              onClick={() => {
+                const [ws, id] = campaignId.split(':')
+                change('assign', userId, Number(id), ws === 'main' ? null : ws)
+              }}
               disabled={saving || !userId || !campaignId}
               className="btn-primary text-sm px-4 py-2"
             >
@@ -132,11 +139,11 @@ export default function PipelineAccess() {
                 <div>
                   <p className="text-brand-cream">{label(a)}</p>
                   <p className="text-brand-beige text-xs">
-                    {a.campaign_name || `Campaign ${a.heyreach_campaign_id}`} · since {new Date(a.assigned_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {a.workspace_name ? `${a.workspace_name} · ` : ''}{a.campaign_name || `Campaign ${a.heyreach_campaign_id}`} · since {new Date(a.assigned_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                   </p>
                 </div>
                 <button
-                  onClick={() => change('remove', a.user_id, a.heyreach_campaign_id)}
+                  onClick={() => change('remove', a.user_id, a.heyreach_campaign_id, a.workspace_id)}
                   disabled={saving}
                   className="btn-secondary text-xs px-3 py-1.5"
                 >

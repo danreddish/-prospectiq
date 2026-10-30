@@ -9,7 +9,6 @@ import {
   HEYREACH_MESSAGE_FIELDS,
   HEYREACH_MESSAGE_LABELS,
   HEYREACH_MESSAGE_SOFT_LIMITS,
-  HEYREACH_TEST_CAMPAIGN,
   pushProblems,
   splitName,
   type HeyReachMessageField,
@@ -30,10 +29,19 @@ export interface TestRow {
   heyreach: HeyReachState | null
 }
 
+interface SendableCampaign {
+  id: number
+  name: string
+  status: string
+  workspaceId: string | null
+  workspaceName: string
+}
+
 interface CampaignCheck {
   keySet: boolean
   keyValid?: boolean
-  campaign?: { id: number; name: string; status: string; accountIds: number[]; pushable: boolean } | null
+  campaigns?: SendableCampaign[]
+  campaign?: { id: number; name: string; status: string; accountIds: number[]; pushable: boolean; workspaceId: string | null; workspaceName: string } | null
   problem?: string | null
 }
 
@@ -68,11 +76,13 @@ async function post(path: string, body: unknown) {
 }
 
 export default function HeyReachTest({
+  admin,
   campaign,
   initialRows,
   excludedBySlug,
   exclusionsError,
 }: {
+  admin: boolean
   campaign: { id: string; name: string; customInstructions?: string | null }
   initialRows: TestRow[]
   excludedBySlug: Record<string, 'ulinc' | 'heyreach'>
@@ -109,9 +119,14 @@ export default function HeyReachTest({
     .map((r) => cleanPersonName(r.name))
   const sent = inTest.filter((r) => r.heyreach?.push)
 
-  async function runCheck() {
+  // v79: which HeyReach campaign to send into (any workspace for an admin;
+  // only the campaigns assigned to this user otherwise). The server checks it
+  // again on every send.
+  async function runCheck(target?: { id: number; workspaceId: string | null }) {
+    const chosen = target || (check?.campaign ? { id: check.campaign.id, workspaceId: check.campaign.workspaceId } : null)
+    const q = chosen ? `?heyreach_campaign_id=${chosen.id}&workspace_id=${chosen.workspaceId || 'main'}` : ''
     try {
-      const res = await fetch('/api/heyreach/campaign', { cache: 'no-store' })
+      const res = await fetch(`/api/heyreach/campaign${q}`, { cache: 'no-store' })
       setCheck(await res.json())
     } catch {
       setCheck({ keySet: false, problem: 'Could not reach ProspectIQ.' })
@@ -202,6 +217,7 @@ export default function HeyReachTest({
       campaign_id: campaign.id,
       prospect_id: r.id,
       heyreach_campaign_id: check?.campaign?.id,
+      heyreach_workspace_id: check?.campaign?.workspaceId ?? null,
     })
     updateRow(r.id, data.heyreach, true)
     if (!ok) toast.error(`${cleanPersonName(r.name)}: ${data.error || 'not sent'}`)
@@ -213,7 +229,7 @@ export default function HeyReachTest({
     const list = approved
     let accepted = 0
     for (let i = 0; i < list.length; i++) {
-      setBusy(`Sending ${cleanPersonName(list[i].name)} to HeyReach (${i + 1} of ${list.length})...`)
+      setBusy(`Sending ${cleanPersonName(list[i].name)} (${i + 1} of ${list.length})...`)
       if (await pushOne(list[i])) accepted++
     }
     setBusy('')
@@ -236,9 +252,9 @@ export default function HeyReachTest({
         <Link href={`/dashboard/campaigns/${campaign.id}`} className="text-brand-rose-gold text-xs font-semibold hover:underline">
           &larr; {campaign.name}
         </Link>
-        <h1 className="text-2xl font-display text-brand-cream mt-2">HeyReach test</h1>
+        <h1 className="text-2xl font-display text-brand-cream mt-2">Send to LinkedIn</h1>
         <p className="text-brand-beige text-sm mt-1">
-          Blank connection request, then four messages once they accept. Nothing goes to HeyReach until you approve it.
+          ProspectIQ writes four LinkedIn messages for each person. You check them, then send. They get a blank connection request, then the four messages once they accept. Nothing is sent until you approve it.
         </p>
         {busy && <p className="text-brand-rose-gold text-sm mt-3">{busy}</p>}
         {exclusionsError && (
@@ -251,16 +267,38 @@ export default function HeyReachTest({
       {/* Connection */}
       <section className="border border-brand-charcoal rounded-lg p-5 text-sm">
         <div className="flex items-center justify-between">
-          <h2 className="text-brand-cream font-semibold">HeyReach campaign</h2>
-          <button onClick={runCheck} className="btn-secondary text-xs px-3 py-1.5">Check again</button>
+          <h2 className="text-brand-cream font-semibold">LinkedIn campaign</h2>
+          <button onClick={() => runCheck()} className="btn-secondary text-xs px-3 py-1.5">Check again</button>
         </div>
+        {(check?.campaigns?.length || 0) > 1 && (
+          <label className="text-brand-beige text-xs flex items-center gap-2 mt-3">
+            Send into
+            <select
+              value={check?.campaign ? `${check.campaign.workspaceId || 'main'}:${check.campaign.id}` : ''}
+              disabled={!!busy}
+              onChange={(e) => {
+                const [ws, id] = e.target.value.split(':')
+                setCheck(null)
+                runCheck({ id: Number(id), workspaceId: ws === 'main' ? null : ws })
+              }}
+              className="text-sm py-1.5 px-3"
+            >
+              {(check?.campaigns || []).map((c) => (
+                <option key={`${c.workspaceId || 'main'}:${c.id}`} value={`${c.workspaceId || 'main'}:${c.id}`}>
+                  {admin ? `${c.workspaceName} · ` : ''}
+                  {c.name} ({c.status.toLowerCase().replace(/_/g, ' ')})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {!check ? (
           <p className="text-brand-beige mt-2">Checking...</p>
         ) : check.problem ? (
           <p className="text-red-400 mt-2">{check.problem}</p>
         ) : (
           <p className="text-green-400 mt-2">
-            &ldquo;{check.campaign?.name}&rdquo; is {check.campaign?.status}, with {check.campaign?.accountIds.length} sender account
+            &ldquo;{check.campaign?.name}&rdquo;{admin && check.campaign ? ` (${check.campaign.workspaceName})` : ''} is {check.campaign?.status === 'IN_PROGRESS' || check.campaign?.status === 'ACTIVE' ? 'running' : check.campaign?.status}, with {check.campaign?.accountIds.length} LinkedIn account
             {check.campaign?.accountIds.length === 1 ? '' : 's'}. Ready.
           </p>
         )}
@@ -399,7 +437,7 @@ export default function HeyReachTest({
                     Check HeyReach
                   </button>
                   <p className="text-brand-beige text-xs mt-2">
-                    Asks HeyReach whether it has this person, and only adds them if it doesn&apos;t. Available a minute after the last attempt.
+                    Asks HeyReach whether it already has this person. It never adds them from here: if HeyReach doesn&apos;t have them, they go back to approved for you to send again. Available a minute after the last attempt.
                   </p>
                 </div>
               )}
@@ -446,7 +484,7 @@ export default function HeyReachTest({
       <section className="border border-brand-charcoal rounded-lg p-5">
         <h2 className="text-brand-cream font-semibold">3. Send to HeyReach</h2>
         <p className="text-brand-beige text-sm mt-1">
-          Adds each approved person to &ldquo;{HEYREACH_TEST_CAMPAIGN}&rdquo; with msg_1 to msg_4. The campaign is live, so their blank connection
+          Adds each approved person to &ldquo;{check?.campaign?.name || 'your LinkedIn campaign'}&rdquo; with msg_1 to msg_4. The campaign is live, so their blank connection
           request goes out on HeyReach&apos;s schedule.
         </p>
         <p className="text-brand-cream text-sm mt-3">
@@ -474,7 +512,7 @@ export default function HeyReachTest({
             </div>
           </div>
         )}
-        {!ready && check && <p className="text-red-400 text-xs mt-2">Fix the HeyReach campaign first: {check.problem}</p>}
+        {!ready && check && <p className="text-red-400 text-xs mt-2">{admin ? `Fix the HeyReach campaign first: ${check.problem}` : 'Your LinkedIn campaign isn\'t ready yet. We\'ll let you know when it is.'}</p>}
       </section>
 
       {/* Results */}
