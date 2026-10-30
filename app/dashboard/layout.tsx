@@ -32,6 +32,13 @@ export default async function DashboardLayout({
     .eq('user_id', user.id)
     .is('read_at', null)
 
+  // v78: the LinkedIn pipeline shows in the nav once a HeyReach campaign has
+  // been assigned to this user (admins always). A missing table reads as none.
+  const { count: pipelineCampaigns } = await supabase
+    .from('heyreach_campaign_access')
+    .select('heyreach_campaign_id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+
   const limits = PLAN_LIMITS[(profile.plan_tier as PlanTier)] || PLAN_LIMITS.free
   // v75.7: a cycle that has passed counts as reset, matching the database.
   const used = effectiveUsage(profile)
@@ -70,6 +77,7 @@ export default async function DashboardLayout({
         <nav className="flex-1 p-4 space-y-1">
           <NavLink href="/dashboard" label="Dashboard" />
           <NavLink href="/dashboard/campaigns" label="Campaigns" />
+          {(admin || (pipelineCampaigns || 0) > 0) && <NavLink href="/dashboard/linkedin" label="LinkedIn pipeline" />}
           <NavLink href="/dashboard/recruitment" label="Recruitment" badge={unreadAlerts || 0} />
           <NavLink href="/dashboard/recruitment/watchlist" label="Watchlist" sub />
           <NavLink href="/dashboard/recruitment/alerts" label="Alerts" sub />
