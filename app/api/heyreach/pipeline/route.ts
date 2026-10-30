@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireHeyReachAdmin } from '@/lib/heyreach-route'
 import { heyReachKeyIsSet, listHeyReachCampaigns, getCampaignLeads, getOverallStats, type HeyReachCampaignSummary } from '@/lib/heyreach'
 import { HEYREACH_TEST_CAMPAIGN } from '@/lib/heyreach-shared'
-import { funnelFrom, leadStage, STAGE_LABELS, type PipelineActivity, type PipelineStage } from '@/lib/heyreach-pipeline'
+import { companyChanged, funnelFrom, leadStage, STAGE_LABELS, type PipelineActivity, type PipelineStage } from '@/lib/heyreach-pipeline'
+import { cleanPersonName } from '@/lib/names'
 import { linkedInProfileSlug } from '@/lib/linkedin'
 import type { createClient } from '@/lib/supabase/server'
 
@@ -20,10 +21,12 @@ const NO_STORE = { headers: { 'Cache-Control': 'no-store' } }
 const PERIODS = [7, 30, 90]
 const DEADLINE_MS = 8500
 
-const STAGE_ORDER: PipelineStage[] = ['replied', 'messaged', 'accepted', 'request_sent', 'waiting', 'paused', 'finished', 'removed']
+const STAGE_ORDER: PipelineStage[] = ['replied', 'messaged', 'accepted', 'request_sent', 'waiting', 'paused', 'already_connected', 'finished', 'removed']
 
 interface ProspectMatch {
   prospectId: string
+  name: string
+  company: string | null
   campaignId: string
   campaignName: string | null
   tier: string | null
@@ -33,7 +36,7 @@ interface ProspectMatch {
 async function prospectMatches(supabase: ReturnType<typeof createClient>, userId: string): Promise<Map<string, ProspectMatch>> {
   const { data, error } = await supabase
     .from('prospects')
-    .select('id, campaign_id, total_score, tier, linkedin_url, heyreach')
+    .select('id, name, company, campaign_id, total_score, tier, linkedin_url, heyreach')
     .eq('user_id', userId)
     .not('heyreach', 'is', null)
     .limit(2000)
@@ -50,8 +53,11 @@ async function prospectMatches(supabase: ReturnType<typeof createClient>, userId
     const hr = (r.heyreach || {}) as { profile_url?: string }
     const slug = linkedInProfileSlug(hr.profile_url || (r.linkedin_url as string | null))
     if (!slug) continue
+    const hrNames = r.heyreach as { first_name?: string; last_name?: string } | null
     map.set(slug, {
       prospectId: r.id as string,
+      name: [hrNames?.first_name, hrNames?.last_name].filter(Boolean).join(' ') || cleanPersonName(r.name as string),
+      company: (r.company as string | null) || null,
       campaignId: r.campaign_id as string,
       campaignName: names.get(r.campaign_id as string) || null,
       tier: (r.tier as string | null) || null,
@@ -118,7 +124,17 @@ export async function GET(req: NextRequest) {
     .map((l) => {
       const stage = leadStage(l)
       const slug = linkedInProfileSlug(l.profileUrl)
-      return { ...l, stage, stageLabel: STAGE_LABELS[stage], prospectiq: (slug && matches.get(slug)) || null }
+      const match = (slug && matches.get(slug)) || null
+      return {
+        ...l,
+        // HeyReach takes names from LinkedIn, credentials and all ("Rob MCSI)").
+        // The name ProspectIQ sent is cleaner.
+        name: match?.name || cleanPersonName(l.name) || l.name,
+        stage,
+        stageLabel: STAGE_LABELS[stage],
+        prospectiq: match,
+        companyChangedFrom: match && companyChanged(match.company, l.company) ? match.company : null,
+      }
     })
     .sort((a, b) => {
       const byStage = STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage)

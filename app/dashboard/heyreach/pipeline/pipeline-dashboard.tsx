@@ -13,7 +13,8 @@ interface Campaign {
 interface Lead extends PipelineLead {
   stage: PipelineStage
   stageLabel: string
-  prospectiq: { prospectId: string; campaignId: string; campaignName: string | null; tier: string | null; score: number | null } | null
+  prospectiq: { prospectId: string; name: string; company: string | null; campaignId: string; campaignName: string | null; tier: string | null; score: number | null } | null
+  companyChangedFrom: string | null
 }
 
 interface PipelineData {
@@ -104,7 +105,12 @@ export default function PipelineDashboard() {
   const funnel = data?.funnel || null
   const activity = data?.activity || null
   const leads = data?.leads || []
-  const active = funnel ? funnel.inCampaign - funnel.removed : 0
+  const active = funnel ? funnel.inCampaign - funnel.removed - funnel.alreadyConnected : 0
+  const stopped = funnel
+    ? [funnel.removed ? `${funnel.removed} removed or failed` : '', funnel.alreadyConnected ? `${funnel.alreadyConnected} already connected` : '']
+        .filter(Boolean)
+        .join(', ')
+    : ''
 
   return (
     <div className="p-8 max-w-5xl space-y-8">
@@ -189,7 +195,7 @@ export default function PipelineDashboard() {
                     &ldquo;{data.campaign.name}&rdquo; is {niceStatus(data.campaign.status)}. HeyReach sends on the campaign&apos;s own schedule.
                   </p>
                   <div className="mt-5 space-y-3">
-                    <FunnelBar label="In the campaign" value={funnel.inCampaign} whole={funnel.inCampaign} note={funnel.removed ? `${funnel.removed} removed or failed` : undefined} />
+                    <FunnelBar label="In the campaign" value={funnel.inCampaign} whole={funnel.inCampaign} note={stopped || undefined} />
                     <FunnelBar label="Request sent" value={funnel.requestsSent} whole={funnel.inCampaign} />
                     <FunnelBar label="Accepted" value={funnel.accepted} whole={funnel.inCampaign} note={`${formatRate(funnel.acceptanceRate)} of requests`} />
                     <FunnelBar label="Messaged" value={funnel.messaged} whole={funnel.inCampaign} />
@@ -262,12 +268,21 @@ export default function PipelineDashboard() {
                           </td>
                           <td className="py-3 pr-4 text-brand-beige">
                             {[l.position, l.company].filter(Boolean).join(', ') || '–'}
+                            {l.companyChangedFrom && (
+                              <p className="text-amber-400 text-[11px] mt-1">
+                                ProspectIQ had {l.companyChangedFrom}. Check their messages still fit.
+                              </p>
+                            )}
                           </td>
                           <td className="py-3 pr-4">
                             <span className={`inline-block border rounded-full px-2 py-0.5 text-xs ${l.stage === 'removed' ? 'border-brand-charcoal text-brand-beige' : 'border-brand-rose-gold/60 text-brand-cream'}`}>
                               {l.stageLabel}
                             </span>
-                            {l.statusMessage && <p className="text-brand-beige text-[11px] mt-1">{l.statusMessage}</p>}
+                            {l.stage === 'already_connected' ? (
+                              <p className="text-brand-beige text-[11px] mt-1">Stopped by HeyReach. Message them directly.</p>
+                            ) : (
+                              l.statusMessage && <p className="text-brand-beige text-[11px] mt-1">{l.statusMessage}</p>
+                            )}
                           </td>
                           <td className="py-3 pr-4 text-brand-beige tabular-nums whitespace-nowrap">{when(l.lastActionTime || l.creationTime)}</td>
                           <td className="py-3 text-brand-beige whitespace-nowrap">
@@ -287,7 +302,7 @@ export default function PipelineDashboard() {
                 </div>
               )}
               <p className="text-brand-beige text-[11px] mt-4">
-                Acceptance rate is accepted out of requests sent. Reply rate is replied out of those messaged. People who were already connected skip the request and go straight to messages.
+                Acceptance rate is accepted out of requests sent. Reply rate is replied out of those messaged. This campaign starts with a connection request, so HeyReach stops anyone who is already connected to you; message them directly instead.
               </p>
             </section>
           )}

@@ -19,6 +19,7 @@ export type PipelineStage =
   | 'replied'
   | 'finished'
   | 'paused'
+  | 'already_connected'
   | 'removed'
 
 export const STAGE_LABELS: Record<PipelineStage, string> = {
@@ -29,6 +30,7 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
   replied: 'Replied',
   finished: 'Finished, no reply',
   paused: 'Paused',
+  already_connected: 'Already connected',
   removed: 'Removed or failed',
 }
 
@@ -48,7 +50,10 @@ export interface PipelineLead {
 
 export interface PipelineFunnel {
   inCampaign: number
+  /** Removed by the user, or failed for any reason other than already being connected. */
   removed: number
+  /** Stopped by HeyReach because they were already a 1st-degree connection. */
+  alreadyConnected: number
   requestsSent: number
   accepted: number
   messaged: number
@@ -73,11 +78,21 @@ export function normaliseStatus(s: string | null | undefined): string {
   return (s || '').toLowerCase().replace(/[^a-z]/g, '')
 }
 
+/**
+ * HeyReach stops a lead it finds is already a 1st-degree connection when the
+ * sequence starts with a connection request ("Already a connection"). That
+ * isn't a dead lead: they can be messaged directly.
+ */
+export function isAlreadyConnected(lead: Pick<PipelineLead, 'campaignStatus' | 'statusMessage'>): boolean {
+  return normaliseStatus(lead.campaignStatus) === 'failed' && /already\s+(a\s+)?connect/i.test(lead.statusMessage || '')
+}
+
 /** The furthest step this lead has reached. */
-export function leadStage(lead: Pick<PipelineLead, 'campaignStatus' | 'connectionStatus' | 'messageStatus'>): PipelineStage {
+export function leadStage(lead: Pick<PipelineLead, 'campaignStatus' | 'connectionStatus' | 'messageStatus' | 'statusMessage'>): PipelineStage {
   const campaign = normaliseStatus(lead.campaignStatus)
   const connection = normaliseStatus(lead.connectionStatus)
   const message = normaliseStatus(lead.messageStatus)
+  if (isAlreadyConnected(lead)) return 'already_connected'
   if (campaign === 'failed') return 'removed'
   if (message === 'messagereply') return 'replied'
   if (message === 'messagesent') return 'messaged'
@@ -96,6 +111,22 @@ function sentRequest(lead: PipelineLead): boolean {
 function wasMessaged(lead: PipelineLead): boolean {
   const m = normaliseStatus(lead.messageStatus)
   return m === 'messagesent' || m === 'messagereply'
+}
+
+const COMPANY_NOISE = /\b(ltd|limited|llp|plc|uk|group|the|and|&)\b/g
+
+/**
+ * True when the company on the live LinkedIn profile looks like a different
+ * firm from the one ProspectIQ researched (the first live run found a
+ * prospect whose LinkedIn had moved to another firm).
+ */
+export function companyChanged(prospectIqCompany: string | null | undefined, liveCompany: string | null | undefined): boolean {
+  const clean = (c: string) => c.toLowerCase().replace(COMPANY_NOISE, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
+  if (!prospectIqCompany || !liveCompany) return false
+  const a = clean(prospectIqCompany)
+  const b = clean(liveCompany)
+  if (!a || !b) return false
+  return !(a === b || a.includes(b) || b.includes(a))
 }
 
 export function ratio(part: number, whole: number): number | null {
@@ -118,7 +149,8 @@ export function funnelFrom(leads: PipelineLead[]): PipelineFunnel {
   const replied = leads.filter((l) => normaliseStatus(l.messageStatus) === 'messagereply').length
   return {
     inCampaign: leads.length,
-    removed: leads.filter((l) => normaliseStatus(l.campaignStatus) === 'failed').length,
+    removed: leads.filter((l) => normaliseStatus(l.campaignStatus) === 'failed' && !isAlreadyConnected(l)).length,
+    alreadyConnected: leads.filter(isAlreadyConnected).length,
     requestsSent,
     accepted,
     messaged,
