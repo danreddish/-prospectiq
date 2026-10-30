@@ -314,7 +314,7 @@ Return this exact JSON structure:
 const HEYREACH_MESSAGE_BRIEF = `msg_1 (Engage in dialogue, sent 24 hours after they accept, max 300 chars): thank them for connecting, using their first name. Stay curious and human. Ask ONE light question about their firm or role that invites a reply. NO pitch, NO mention of the sender's services, NO call ask.
 msg_2 (Build the relationship, 5-7 days later, max 600 chars): give something genuinely useful: an insight, observation or trend relevant to THEIR firm, role or clients. Reference their context. NO pitch, NO service mention, NO ask.
 msg_3 (Build the relationship, 5-7 days later, max 600 chars): a second, different piece of value that builds on msg_2. You may say in one line what the sender works on, kept directional (e.g. "helping owner-run firms win more of the right clients"), never figures. NO ask.
-msg_4 (Exit, 5-7 days later, max 400 chars): a short, gracious close. Acknowledge they are busy, say you won't keep messaging, and leave the door open for them to get in touch if it ever becomes relevant. No new pitch, no call ask, no guilt, no "just bumping this". If the campaign instructions say what to offer in the final message, include it as one light, optional offer they can take up by replying. Never suggest times or include a calendar link. No promised results.`
+msg_4 (Exit, 5-7 days later, max 400 chars): a short, gracious close. Acknowledge they are busy, say you won't keep messaging, and leave the door open for them to get in touch if it ever becomes relevant. No new pitch, no call ask, no guilt, no "just bumping this". If the sender's instructions for this campaign say what to offer in the final message, you MUST include it, as one light, optional offer they can take up by replying. Never suggest times or include a calendar link. No promised results.`
 
 const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
 - The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.
@@ -322,14 +322,21 @@ const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
 - Peer to peer, warm and specific to THIS person. No salesy language, no flattery, no "I hope this finds you well".
 - NEVER invent figures, case studies, client names or statistics. Directional language only.
 - No financial advice. No guarantees. British English.
-- Never use em dashes or en dashes. Use commas or full stops instead.
-- Use their first name at most once per message, and only where it reads naturally.`
+- Never use dashes between words or clauses: no em dashes, no en dashes, no " - ". Use commas or full stops instead.
+- No words in capitals for emphasis.
+- Use their first name at most once per message, and only where it reads naturally.
+- The sender is NOT one of the prospect's peers unless the sender's details above say so. Never call them "fellow", never say "another practice like ours", and never claim the sender is local to them or has been talking to firms in their area. Describe the sender only from the sender's details above.`
 
-/** Replaces em dashes (and spaced en dashes) with commas, per house style. */
+/**
+ * Replaces dashes used as punctuation with commas, per house style: em
+ * dashes, spaced en dashes, and a hyphen with a space either side. Hyphens
+ * inside words ("owner-run") and unspaced ranges ("2009-2024") stay.
+ */
 export function removeDashes(text: string): string {
   return text
     .replace(/\s*\u2014\s*/g, ', ')
     .replace(/\s+\u2013\s+/g, ', ')
+    .replace(/\s+-\s+/g, ', ')
     .replace(/,\s*([,.!?])/g, '$1')
     .trim()
 }
@@ -343,11 +350,18 @@ export async function writeHeyReachMessages(
   opts: ClaudeCallOptions = {}
 ): Promise<Partial<Record<'msg_1' | 'msg_2' | 'msg_3' | 'msg_4', string>>> {
   const serviceCtx = buildServiceContext(context.serviceProfile)
-  let customBlock = ''
-  if (context.customInstructions && context.customInstructions.trim()) {
-    customBlock = `\n\nUSER INSTRUCTIONS FOR THIS CAMPAIGN (apply to outreach personalisation): "${context.customInstructions.trim()}"`
-  }
+  const instructions = context.customInstructions?.trim() || ''
+  // The sender's own instructions for this campaign. They are followed, not
+  // treated as a hint, unless they clash with the RULES. They also go in the
+  // user message, next to the task, because the model skipped them in 3 of 5
+  // final messages when they sat only in the system prompt.
+  const customBlock = instructions
+    ? `\n\nTHE SENDER'S INSTRUCTIONS FOR THIS CAMPAIGN (follow them wherever they apply to the messages you are writing, unless they break the RULES below): "${instructions}"`
+    : ''
   const keys = part === 1 ? (['msg_1', 'msg_2'] as const) : (['msg_3', 'msg_4'] as const)
+  const reminder = instructions
+    ? `\n\nBefore you answer, re-read the sender's instructions for this campaign and make sure ${keys.join(' and ')} follow them where they apply: "${instructions}"`
+    : ''
 
   const known: string[] = []
   if (input.first_name) known.push(`First name: ${input.first_name}`)
@@ -365,8 +379,8 @@ export async function writeHeyReachMessages(
     response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 600,
-      system: `Write LinkedIn messages for a financial services professional's LinkedIn sequence. Return JSON only.
-Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}
+      system: `Write LinkedIn messages for the sender's LinkedIn sequence. Return JSON only.
+Sender: ${context.senderName} | Who the sender is targeting: ${context.niche}${serviceCtx}${customBlock}
 
 THE FULL SEQUENCE (LINK Method order). You are writing ${keys.join(' and ')} only.
 ${HEYREACH_MESSAGE_BRIEF}
@@ -379,7 +393,7 @@ ${HEYREACH_RULES}`,
 Name: ${input.name}
 Role: ${input.role || 'Director'}
 Company: ${input.company || 'Unknown'}
-Location: ${input.location || 'Unknown'}${known.length ? `\n${known.join('\n')}` : ''}${earlierBlock}
+Location: ${input.location || 'Unknown'}${known.length ? `\n${known.join('\n')}` : ''}${earlierBlock}${reminder}
 
 Return this exact JSON structure:
 {${keys.map((k) => `"${k}": "..."`).join(', ')}}`
