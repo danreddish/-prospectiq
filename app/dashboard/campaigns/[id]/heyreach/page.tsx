@@ -15,7 +15,7 @@ export default async function CampaignHeyReachPage({ params }: { params: { id: s
 
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('id, name, purpose')
+    .select('id, name, purpose, custom_instructions')
     .eq('id', params.id)
     .eq('user_id', user.id)
     .maybeSingle()
@@ -50,7 +50,7 @@ export default async function CampaignHeyReachPage({ params }: { params: { id: s
 
   return (
     <HeyReachTest
-      campaign={{ id: campaign.id, name: campaign.name }}
+      campaign={{ id: campaign.id, name: campaign.name, customInstructions: campaign.custom_instructions || null }}
       initialRows={(rows || []) as TestRow[]}
       excludedBySlug={excluded}
       exclusionsError={exclusionsError}

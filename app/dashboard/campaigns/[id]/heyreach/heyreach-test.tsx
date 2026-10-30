@@ -73,7 +73,7 @@ export default function HeyReachTest({
   excludedBySlug,
   exclusionsError,
 }: {
-  campaign: { id: string; name: string }
+  campaign: { id: string; name: string; customInstructions?: string | null }
   initialRows: TestRow[]
   excludedBySlug: Record<string, 'ulinc' | 'heyreach'>
   exclusionsError: string
@@ -317,6 +317,11 @@ export default function HeyReachTest({
       {/* Review */}
       <section className="space-y-4">
         <h2 className="text-brand-cream font-semibold">2. Review, edit, approve or reject</h2>
+        {campaign.customInstructions && (
+          <p className="text-brand-beige text-xs mt-1 mb-3">
+            Campaign instructions to check against: <span className="text-brand-cream">{campaign.customInstructions}</span>
+          </p>
+        )}
         {inTest.length === 0 && <p className="text-brand-beige text-sm">No messages written yet.</p>}
         {inTest.map((r) => {
           const d = withNames(r, draftFor(r))
