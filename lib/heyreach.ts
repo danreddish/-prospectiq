@@ -220,6 +220,44 @@ export async function getHeyReachLead(profileUrl: string, timeoutMs = 4000): Pro
 }
 
 /**
+ * The useful part of a GetLead reply: who HeyReach matched on LinkedIn.
+ * GetLead returns the LinkedIn profile (with the full About text), not the
+ * campaign's msg_1 to msg_4, so the whole body is often too long to keep.
+ */
+export function leadSummary(body: unknown): Record<string, string | null> {
+  const s = (k: string, ...more: string[]) => {
+    const v = pick(body, k, ...more)
+    return typeof v === 'string' || typeof v === 'number' ? String(v).slice(0, 300) : null
+  }
+  return {
+    linkedin_id: s('linkedin_id', 'linkedInId'),
+    firstName: s('firstName'),
+    lastName: s('lastName'),
+    profileUrl: s('profileUrl'),
+    headline: s('headline'),
+    position: s('position'),
+    companyName: s('companyName'),
+    location: s('location'),
+  }
+}
+
+/**
+ * Things on the live LinkedIn profile that say this person is no longer the
+ * right target. Apollo's title can be years out of date (the first live run
+ * pushed an "Owner" whose LinkedIn headline was "Retired financial planner").
+ */
+export function leadWarnings(summary: Record<string, string | null>): string[] {
+  const warnings: string[] = []
+  for (const field of ['headline', 'position'] as const) {
+    const v = summary[field]
+    if (v && /\b(retired|formerly|former)\b|\bex-[a-z]/i.test(v)) {
+      warnings.push(`LinkedIn ${field} says "${v.slice(0, 120)}". Check they are still in role, and remove them from the HeyReach campaign if not.`)
+    }
+  }
+  return warnings
+}
+
+/**
  * What a GetLead reply says. Only a 404, or a 200 with no lead in it, means
  * "not there". A rate limit, a server error or anything odd is "unknown", so
  * a stuck push is never re-added on a guess.

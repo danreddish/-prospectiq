@@ -37,7 +37,12 @@ export interface HeyReachPushRecord {
   linkedin_account_id: number
   sent_lead: Record<string, unknown>
   response: { status: number; ms: number; added: number; updated: number; failed: number; body: unknown } | null
-  read_back: { status: number; body: unknown } | { error: string } | { skipped: string } | null
+  /**
+   * GetLead after the push: who HeyReach matched on LinkedIn (a short
+   * summary, not msg_1 to msg_4, which GetLead doesn't return), plus any
+   * warnings from the live profile, e.g. a "Retired" headline.
+   */
+  read_back: { status: number; body: unknown; warnings?: string[] } | { error: string } | { skipped: string } | null
   outcome: 'accepted' | 'rejected'
   /** True when a stuck push was resolved by finding the lead already in HeyReach. */
   recovered?: boolean

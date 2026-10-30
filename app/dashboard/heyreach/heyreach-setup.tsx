@@ -30,7 +30,7 @@ export default function HeyReachSetup({
   async function runCheck() {
     setChecking(true)
     try {
-      const res = await fetch('/api/heyreach/campaign')
+      const res = await fetch('/api/heyreach/campaign', { cache: 'no-store' })
       setCheck(await res.json())
     } catch {
       setCheck({ keySet: false, problem: 'Could not reach ProspectIQ. Try again.' })

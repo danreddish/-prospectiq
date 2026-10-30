@@ -18,6 +18,8 @@ import {
   addLeadToHeyReach,
   getHeyReachLead,
   leadLookup,
+  leadSummary,
+  leadWarnings,
   type HeyReachCampaign,
 } from '@/lib/heyreach'
 import {
@@ -56,6 +58,14 @@ const Schema = z.object({
 
 const DEADLINE_MS = 9000
 const STUCK_AFTER_MS = 60_000
+
+/** GetLead, kept short: who HeyReach matched, and anything on the live profile worth a look. */
+function readBackFrom(lead: { status: number; ok: boolean; body: unknown }): { status: number; body: unknown; warnings?: string[] } {
+  if (!lead.ok || !lead.body || typeof lead.body !== 'object') return { status: lead.status, body: trimBody(lead.body) }
+  const body = leadSummary(lead.body)
+  const warnings = leadWarnings(body)
+  return warnings.length ? { status: lead.status, body, warnings } : { status: lead.status, body }
+}
 
 function trimBody(body: unknown): unknown {
   const text = typeof body === 'string' ? body : JSON.stringify(body ?? null)
@@ -188,7 +198,7 @@ export async function POST(req: NextRequest) {
       // GetLead searches the whole HeyReach workspace, so this is noted as a
       // recovery: the read-back shows where HeyReach holds them.
       const { next } = await finish(
-        { ...baseRecord, at: new Date().toISOString(), sent_lead: state.push?.sent_lead || {}, response: null, read_back: { status: lead.status, body: trimBody(lead.body) }, outcome: 'accepted', recovered: true },
+        { ...baseRecord, at: new Date().toISOString(), sent_lead: state.push?.sent_lead || {}, response: null, read_back: readBackFrom(lead), outcome: 'accepted', recovered: true },
         true
       )
       console.log(`[HeyReach] Stuck push for ${prospect.name}: HeyReach has the lead`)
@@ -270,7 +280,8 @@ export async function POST(req: NextRequest) {
     if (left() > 2500) {
       try {
         const lead = await getHeyReachLead(profileUrl, Math.min(3000, left() - 1000))
-        readBack = { status: lead.status, body: trimBody(lead.body) }
+        readBack = readBackFrom(lead)
+        if (readBack.warnings?.length) console.warn(`[HeyReach] ${prospect.name}: ${readBack.warnings.join(' ')}`)
       } catch (err) {
         readBack = { error: err instanceof Error ? err.message : 'read-back failed' }
       }

@@ -35,7 +35,7 @@ export async function GET() {
   if (auth.response) return auth.response
   try {
     const c = await counts(auth.user.id)
-    return NextResponse.json({ total: c.ulinc + c.heyreach, ...c })
+    return NextResponse.json({ total: c.ulinc + c.heyreach, ...c }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Could not count' }, { status: 500 })
   }

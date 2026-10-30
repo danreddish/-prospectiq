@@ -96,7 +96,7 @@ export default function CampaignsPage() {
   // The route is admin-only for now, so for everyone else this stays null and
   // the "skip" option is hidden.
   useEffect(() => {
-    fetch('/api/heyreach/exclusions')
+    fetch('/api/heyreach/exclusions', { cache: 'no-store' })
       .then((r) => {
         // 404 = not an admin. Anything else is a real failure worth showing.
         if (!r.ok && r.status !== 404) toast.error('Could not load your Ulinc contacts list. Find will not skip them this time.')

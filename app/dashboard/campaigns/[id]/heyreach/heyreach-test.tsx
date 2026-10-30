@@ -111,7 +111,7 @@ export default function HeyReachTest({
 
   async function runCheck() {
     try {
-      const res = await fetch('/api/heyreach/campaign')
+      const res = await fetch('/api/heyreach/campaign', { cache: 'no-store' })
       setCheck(await res.json())
     } catch {
       setCheck({ keySet: false, problem: 'Could not reach ProspectIQ.' })
@@ -493,6 +493,9 @@ export default function HeyReachTest({
                         : 'No reply recorded.'}{' '}
                     Campaign {p.heyreach_campaign_id} ({p.heyreach_campaign_status}), sender {p.linkedin_account_id}. {new Date(p.at).toLocaleString('en-GB')}
                   </p>
+                  {p.read_back && 'warnings' in p.read_back && p.read_back.warnings?.map((w) => (
+                    <p key={w} className="text-amber-400 text-xs mt-1">{w}</p>
+                  ))}
                   <details className="mt-2">
                     <summary className="text-brand-rose-gold text-xs cursor-pointer">Raw replies</summary>
                     <pre className="text-[11px] text-brand-beige whitespace-pre-wrap break-all mt-2 max-h-80 overflow-auto">
