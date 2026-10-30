@@ -140,7 +140,16 @@ html[data-motion=off] .rise.pending{opacity:1;transform:none;filter:none}
 .play:hover span.btn{transform:scale(1.06);box-shadow:0 26px 70px -10px rgba(196,159,140,.75),0 0 0 14px rgba(196,159,140,.16)}
 .play small{font:600 13px/1 var(--body);letter-spacing:.18em;text-transform:uppercase;color:var(--cream)}
 .player.on .play{opacity:0;pointer-events:none}
-@media (max-width:600px){.play span.btn{width:72px;height:72px}.play span.btn::before{border-width:12px 0 12px 20px;margin-left:5px}}
+.play .lbl-sound{display:none}
+.player.preview .play{background:linear-gradient(to top,rgba(11,9,9,.5),transparent 32%);justify-content:flex-end;align-items:flex-start;padding:0 0 26px 28px}
+.player.preview .play span.btn,.player.preview .play .lbl-idle{display:none}
+.player.preview .play .lbl-sound{display:inline-flex;align-items:center;gap:10px;padding:12px 18px 12px 14px;border-radius:999px;font-size:12px;letter-spacing:.14em;
+  background:rgba(22,17,15,.62);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border:1px solid rgba(245,240,237,.16);transition:background .35s var(--ease-soft),color .35s,border-color .35s}
+.player.preview .play:hover .lbl-sound,.player.preview .play:focus-visible .lbl-sound{background:linear-gradient(135deg,var(--rose-hi),var(--rose));color:#16110f;border-color:transparent}
+.lbl-sound svg{width:18px;height:18px;flex:none}
+.lbl-sound .w-short{display:none}
+@media (max-width:600px){.play span.btn{width:72px;height:72px}.play span.btn::before{border-width:12px 0 12px 20px;margin-left:5px}
+  .player.preview .play{padding:0 0 12px 12px}.player.preview .play .lbl-sound{font-size:10px;letter-spacing:.12em;padding:8px 12px 8px 10px;gap:7px}.lbl-sound svg{width:15px;height:15px}.lbl-sound .w-long{display:none}.lbl-sound .w-short{display:inline}}
 
 /* statement: word light */
 .say{height:230vh;position:relative}
@@ -361,7 +370,7 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
     </div>
     <div class="player rise card" id="player">
       <video id="tour" src="/home/video/promo.mp4" poster="/home/video/promo-poster.jpg" preload="metadata" playsinline></video>
-      <button class="play" id="playTour" type="button" aria-label="Play the ProspectIQ tour, 1 minute 7 seconds"><span class="btn"></span><small>Play the tour · 1:07</small></button>
+      <button class="play" id="playTour" type="button" aria-label="Play the ProspectIQ tour with sound, 1 minute 7 seconds"><span class="btn"></span><small class="lbl-idle">Play the tour · 1:07</small><small class="lbl-sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.2L12 5.6v12.8l-4.8-3.9H4z" fill="currentColor"/><path d="M15.6 9.2a4 4 0 0 1 0 5.6M18.2 6.6a7.6 7.6 0 0 1 0 10.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span class="w-long">Watch with sound · 1:07</span><span class="w-short">Tap for sound</span></small></button>
     </div>
   </div>
 </section>
@@ -914,14 +923,44 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
   document.addEventListener('pointerleave', () => g.classList.remove('on'));
 })();
 
-/* the tour: play with sound on click, then hand over to the native controls */
+/* the tour: starts by itself when it comes on screen. It tries with sound first (browsers allow that
+   once the visitor has clicked or tapped on the page); if the browser says no, it plays muted on a loop
+   and a tap restarts it from the top with sound and the native controls. Off screen it pauses.
+   Reduced-motion and data-saver visitors get the still poster and the play button instead. */
 (() => {
   const box = document.getElementById('player'), v = document.getElementById('tour'), b = document.getElementById('playTour');
   if (!v) return;
-  b.addEventListener('click', () => { box.classList.add('on'); v.controls = true; v.muted = false; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); });
-  v.addEventListener('ended', () => { box.classList.remove('on'); v.controls = false; v.currentTime = 0; });
-  // a hero button that jumps here also starts the film
-  document.querySelectorAll('a[href="#watch"]').forEach(a => a.addEventListener('click', () => setTimeout(() => { if (v.paused) b.click(); }, 700)));
+  const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches || !!(navigator.connection && navigator.connection.saveData) || (window.Motion && !window.Motion.moving);
+  let mode = 'idle', inView = false, autoPaused = false;
+  function idle() { mode = 'idle'; box.classList.remove('on', 'preview'); v.controls = false; }
+  function preview() {
+    mode = 'preview'; box.classList.remove('on'); box.classList.add('preview');
+    v.controls = false; v.muted = true; v.loop = true;
+    if (inView) v.play().catch(idle);
+  }
+  function autoplay() {
+    mode = 'starting'; v.loop = false; v.muted = false;
+    v.play().then(() => {
+      if (mode !== 'starting') return;
+      mode = 'sound'; box.classList.remove('preview'); box.classList.add('on'); v.controls = true;
+    }).catch(() => { if (mode === 'starting') preview(); });
+  }
+  function withSound() {
+    mode = 'sound'; box.classList.remove('preview'); box.classList.add('on');
+    v.loop = false; v.controls = true; v.currentTime = 0; v.muted = false;
+    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+  }
+  b.addEventListener('click', withSound);
+  v.addEventListener('ended', () => { if (mode !== 'sound') return; v.currentTime = 0; calm() ? idle() : preview(); });
+  new IntersectionObserver(es => {
+    inView = es[0].isIntersecting;
+    if (inView) {
+      if (mode === 'idle') { if (!calm()) autoplay(); }
+      else if (autoPaused) { autoPaused = false; v.play().catch(() => {}); }
+    } else if (!v.paused) { autoPaused = true; v.pause(); }
+  }, { threshold: 0.35 }).observe(box);
+  // a hero button that jumps here starts the film with sound
+  document.querySelectorAll('a[href="#watch"]').forEach(a => a.addEventListener('click', () => setTimeout(withSound, 700)));
 })();
 
 /* Level 1: the PIQ monogram as a live 3D object. The traced brand mark is extruded and bevelled in
