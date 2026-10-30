@@ -314,12 +314,23 @@ Return this exact JSON structure:
 const HEYREACH_MESSAGE_BRIEF = `msg_1 (Engage in dialogue, sent 24 hours after they accept, max 300 chars): thank them for connecting, using their first name. Stay curious and human. Ask ONE light question about their firm or role that invites a reply. NO pitch, NO mention of the sender's services, NO call ask.
 msg_2 (Build the relationship, 5-7 days later, max 600 chars): give something genuinely useful: an insight, observation or trend relevant to THEIR firm, role or clients. Reference their context. NO pitch, NO service mention, NO ask.
 msg_3 (Build the relationship, 5-7 days later, max 600 chars): a second, different piece of value that builds on msg_2. You may say in one line what the sender works on, kept directional (e.g. "helping owner-run firms win more of the right clients"), never figures. NO ask.
-msg_4 (Exit, 5-7 days later, max 400 chars): a short, gracious close. Acknowledge they are busy, say you won't keep messaging, and leave the door open for them to get in touch if it ever becomes relevant. No new pitch, no call ask, no guilt, no "just bumping this". If the sender's instructions for this campaign say what to offer in the final message, you MUST include it, as one light, optional offer they can take up by replying. Never suggest times or include a calendar link. No promised results.`
+msg_4 (Exit, 5-7 days later, max 400 chars): a short, gracious close. Acknowledge they are busy, say you won't keep messaging, and leave the door open for them to get in touch if it ever becomes relevant. No hard sell, no call ask, no guilt, no "just bumping this". Never suggest times or include a calendar link. No promised results.`
+
+/**
+ * The brief, with the sender's instructions bound into msg_4 when there are
+ * any. In the first live run the model left a requested final offer out of
+ * 3 of 5 exit messages when the instruction sat apart from the msg_4 brief.
+ */
+function heyReachBrief(instructions: string): string {
+  if (!instructions) return HEYREACH_MESSAGE_BRIEF
+  return `${HEYREACH_MESSAGE_BRIEF}
+msg_4 MUST also follow the sender's instructions for this campaign: "${instructions}". If they say what to offer or include in the final message, include it as one light, optional offer they can take up by replying, named the way the sender names it.`
+}
 
 const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
 - The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.
 - Each message must make sense on its own if they never replied to the one before. Do not say "following up" or "just checking in".
-- Peer to peer, warm and specific to THIS person. No salesy language, no flattery, no "I hope this finds you well".
+- Equal footing in tone, warm and specific to THIS person. No salesy language, no flattery, no "I hope this finds you well".
 - NEVER invent figures, case studies, client names or statistics. Directional language only.
 - No financial advice. No guarantees. British English.
 - Never use dashes between words or clauses: no em dashes, no en dashes, no " - ". Use commas or full stops instead.
@@ -379,11 +390,14 @@ export async function writeHeyReachMessages(
     response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 600,
+      // Lower than the default 1.0 so the brief and the sender's
+      // instructions are followed more consistently.
+      temperature: 0.4,
       system: `Write LinkedIn messages for the sender's LinkedIn sequence. Return JSON only.
 Sender: ${context.senderName} | Who the sender is targeting: ${context.niche}${serviceCtx}${customBlock}
 
 THE FULL SEQUENCE (LINK Method order). You are writing ${keys.join(' and ')} only.
-${HEYREACH_MESSAGE_BRIEF}
+${heyReachBrief(instructions)}
 
 ${HEYREACH_RULES}`,
       messages: [{
