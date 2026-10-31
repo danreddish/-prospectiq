@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
 import { Prospect } from '@/types'
 import CampaignDashboard from './campaign-dashboard'
-import { isAdmin } from '@/lib/admin'
+import { canOpenSendToLinkedIn } from '@/lib/heyreach-route'
 
 export default async function CampaignDetailPage({
   params,
@@ -38,12 +38,15 @@ export default async function CampaignDetailPage({
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
 
+  // v79: admins, and users with a HeyReach campaign assigned, can send to LinkedIn.
+  const canSendToLinkedIn = await canOpenSendToLinkedIn(supabase, user!.id, user!.email)
+
   return (
     <CampaignDashboard
       campaign={campaign}
       prospects={(prospects as Prospect[]) || []}
       pendingProspects={(pendingProspects as Prospect[]) || []}
-      showHeyReach={isAdmin(user!.email)}
+      showHeyReach={canSendToLinkedIn}
     />
   )
 }

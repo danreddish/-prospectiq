@@ -8,6 +8,8 @@ interface Campaign {
   id: number
   name: string
   status: string
+  workspaceId?: string | null
+  workspaceName?: string
 }
 
 interface Lead extends PipelineLead {
@@ -149,6 +151,7 @@ export default function PipelineDashboard({ admin }: { admin: boolean }) {
           >
             {(data?.campaigns || []).map((c) => (
               <option key={c.id} value={c.id}>
+                {admin && c.workspaceName ? `${c.workspaceName} · ` : ''}
                 {c.name} ({niceStatus(c.status)})
               </option>
             ))}

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { writeHeyReachMessages } from '@/lib/ai-engine'
 import { canonicalProfileUrl } from '@/lib/linkedin'
 import {
-  requireHeyReachAdmin,
+  requireHeyReachSender,
   loadTestProspect,
   mergedServiceProfile,
   exclusionFor,
@@ -27,7 +27,7 @@ const SAVE_RESERVE_MS = 800
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now()
-  const auth = await requireHeyReachAdmin()
+  const auth = await requireHeyReachSender()
   if (auth.response) return auth.response
 
   const parsed = Schema.safeParse(await req.json().catch(() => null))

@@ -46,9 +46,10 @@ export interface HeyReachReply {
 
 async function heyReachRequest(
   path: string,
-  init: { method?: 'GET' | 'POST'; body?: unknown; timeoutMs?: number } = {}
+  init: { method?: 'GET' | 'POST'; body?: unknown; timeoutMs?: number; apiKey?: string } = {}
 ): Promise<HeyReachReply> {
-  const key = process.env.HEYREACH_API_KEY
+  // v79: a workspace's own key, or the main workspace's key from Netlify.
+  const key = init.apiKey || process.env.HEYREACH_API_KEY
   if (!key) throw new Error('HEYREACH_API_KEY is not set in Netlify.')
 
   const controller = new AbortController()
@@ -91,8 +92,8 @@ function pick<T = unknown>(obj: unknown, ...keys: string[]): T | undefined {
   return undefined
 }
 
-export async function checkHeyReachKey(): Promise<boolean> {
-  const reply = await heyReachRequest('/auth/CheckApiKey', { method: 'GET' })
+export async function checkHeyReachKey(apiKey?: string): Promise<boolean> {
+  const reply = await heyReachRequest('/auth/CheckApiKey', { method: 'GET', apiKey })
   return reply.ok
 }
 
@@ -127,8 +128,8 @@ function campaignFrom(item: unknown, detail: unknown): HeyReachCampaign {
 }
 
 /** One campaign by ID, with its sender accounts. */
-export async function getHeyReachCampaign(id: number, timeoutMs = 3000): Promise<HeyReachCampaign | null> {
-  const reply = await heyReachRequest(`/campaign/GetById?campaignId=${id}`, { method: 'GET', timeoutMs })
+export async function getHeyReachCampaign(id: number, timeoutMs = 3000, apiKey?: string): Promise<HeyReachCampaign | null> {
+  const reply = await heyReachRequest(`/campaign/GetById?campaignId=${id}`, { method: 'GET', timeoutMs, apiKey })
   if (!reply.ok || !reply.body || typeof reply.body !== 'object') return null
   return campaignFrom(reply.body, reply.body)
 }
@@ -138,12 +139,12 @@ export async function getHeyReachCampaign(id: number, timeoutMs = 3000): Promise
  * several share the name, the running one wins; two running ones is an error,
  * so a lead never lands in a copy by mistake.
  */
-export async function findHeyReachCampaign(name: string): Promise<HeyReachCampaign | null> {
+export async function findHeyReachCampaign(name: string, apiKey?: string): Promise<HeyReachCampaign | null> {
   const wanted = name.trim().toLowerCase()
   const limit = 100
   const matches: unknown[] = []
   for (let offset = 0; offset < 500; offset += limit) {
-    const reply = await heyReachRequest('/campaign/GetAll', { body: { offset, limit }, timeoutMs: 4000 })
+    const reply = await heyReachRequest('/campaign/GetAll', { body: { offset, limit }, timeoutMs: 4000, apiKey })
     if (!reply.ok) throw new Error(`HeyReach campaign list returned ${reply.status}: ${reply.text.slice(0, 200)}`)
     const items = pick<unknown[]>(reply.body, 'items', 'campaigns', 'data') || []
     matches.push(...items.filter((c) => String(pick(c, 'name') || '').trim().toLowerCase() === wanted))
@@ -158,7 +159,7 @@ export async function findHeyReachCampaign(name: string): Promise<HeyReachCampai
   const item = running[0] || matches[0]
   const id = Number(pick(item, 'id', 'campaignId'))
   // GetById carries the sender accounts reliably; the list may not.
-  const byId = await heyReachRequest(`/campaign/GetById?campaignId=${id}`, { method: 'GET', timeoutMs: 4000 })
+  const byId = await heyReachRequest(`/campaign/GetById?campaignId=${id}`, { method: 'GET', timeoutMs: 4000, apiKey })
   return campaignFrom(item, byId.ok && byId.body && typeof byId.body === 'object' ? byId.body : item)
 }
 
@@ -195,7 +196,8 @@ export async function addLeadToHeyReach(
   campaignId: number,
   linkedInAccountId: number,
   lead: HeyReachLeadInput,
-  timeoutMs = 6000
+  timeoutMs = 6000,
+  apiKey?: string
 ): Promise<HeyReachAddResult> {
   const sentLead: Record<string, unknown> = {
     firstName: lead.firstName,
@@ -209,6 +211,7 @@ export async function addLeadToHeyReach(
   const reply = await heyReachRequest('/campaign/AddLeadsToCampaignV2', {
     body: { campaignId, accountLeadPairs: [{ linkedInAccountId, lead: sentLead }] },
     timeoutMs,
+    apiKey,
   })
   const n = (k: string) => Number(pick(reply.body, k) || 0)
   return {
@@ -221,8 +224,8 @@ export async function addLeadToHeyReach(
 }
 
 /** Reads a lead back by profile URL, to see what HeyReach stored. */
-export async function getHeyReachLead(profileUrl: string, timeoutMs = 4000): Promise<HeyReachReply> {
-  return heyReachRequest('/lead/GetLead', { body: { profileUrl }, timeoutMs })
+export async function getHeyReachLead(profileUrl: string, timeoutMs = 4000, apiKey?: string): Promise<HeyReachReply> {
+  return heyReachRequest('/lead/GetLead', { body: { profileUrl }, timeoutMs, apiKey })
 }
 
 // ── v78: pipeline ──
@@ -252,11 +255,11 @@ export interface HeyReachCampaignSummary {
 }
 
 /** Every campaign in the HeyReach workspace (up to 500). */
-export async function listHeyReachCampaigns(timeoutMs = 4000): Promise<HeyReachCampaignSummary[]> {
+export async function listHeyReachCampaigns(timeoutMs = 4000, apiKey?: string): Promise<HeyReachCampaignSummary[]> {
   const out: HeyReachCampaignSummary[] = []
   const limit = 100
   for (let offset = 0; offset < 500; offset += limit) {
-    const reply = await heyReachRequest('/campaign/GetAll', { body: { offset, limit }, timeoutMs })
+    const reply = await heyReachRequest('/campaign/GetAll', { body: { offset, limit }, timeoutMs, apiKey })
     if (!reply.ok) throw new Error(`HeyReach campaign list returned ${reply.status}: ${reply.text.slice(0, 200)}`)
     const body = payload(reply.body)
     const items = pick<unknown[]>(body, 'items', 'campaigns', 'data') || []
@@ -278,8 +281,9 @@ export async function listHeyReachCampaigns(timeoutMs = 4000): Promise<HeyReachC
  */
 export async function getCampaignLeads(
   campaignId: number,
-  opts: { maxLeads?: number; deadline?: number } = {}
+  opts: { maxLeads?: number; deadline?: number; apiKey?: string } = {}
 ): Promise<{ totalCount: number; leads: PipelineLead[]; truncated: boolean }> {
+  const apiKey = opts.apiKey
   const maxLeads = opts.maxLeads ?? 1000
   const deadline = opts.deadline ?? Date.now() + 7000
   const limit = 100
@@ -289,11 +293,11 @@ export async function getCampaignLeads(
   for (let offset = 0; offset < maxLeads; offset += limit) {
     const left = deadline - Date.now()
     if (left < 1200) return { totalCount, leads, truncated: true }
-    let reply = await heyReachRequest(path, { body: { campaignId, offset, limit }, timeoutMs: Math.min(5000, left - 500) })
+    let reply = await heyReachRequest(path, { body: { campaignId, offset, limit }, timeoutMs: Math.min(5000, left - 500), apiKey })
     // Older docs put this under /lead. Try that once if /campaign is missing.
     if (reply.status === 404 && offset === 0 && path.startsWith('/campaign')) {
       path = '/lead/GetLeadsFromCampaign'
-      reply = await heyReachRequest(path, { body: { campaignId, offset, limit }, timeoutMs: Math.max(1000, Math.min(4000, deadline - Date.now() - 500)) })
+      reply = await heyReachRequest(path, { body: { campaignId, offset, limit }, timeoutMs: Math.max(1000, Math.min(4000, deadline - Date.now() - 500)), apiKey })
     }
     if (!reply.ok) throw new Error(`HeyReach campaign leads returned ${reply.status}: ${reply.text.slice(0, 200)}`)
     const body = payload(reply.body)
@@ -327,11 +331,13 @@ export async function getOverallStats(
   campaignIds: number[],
   startDate: Date,
   endDate: Date,
-  timeoutMs = 4000
+  timeoutMs = 4000,
+  apiKey?: string
 ): Promise<PipelineActivity> {
   const reply = await heyReachRequest('/stats/GetOverallStats', {
     body: { accountIds: [], campaignIds, startDate: startDate.toISOString(), endDate: endDate.toISOString() },
     timeoutMs,
+    apiKey,
   })
   if (!reply.ok) throw new Error(`HeyReach stats returned ${reply.status}: ${reply.text.slice(0, 200)}`)
   const s = pick<Record<string, unknown>>(payload(reply.body), 'overallStats') || {}

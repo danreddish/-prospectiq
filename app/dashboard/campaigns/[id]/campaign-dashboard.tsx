@@ -25,7 +25,7 @@ interface Props {
   watchedIrns?: string[]
   watchedFrns?: string[]
   initialProspectId?: string | null
-  /** v77: admin-only link to the HeyReach test page */
+  /** v77/v79: link to the Send to LinkedIn page (admins, and users with a HeyReach campaign) */
   showHeyReach?: boolean
 }
 
@@ -607,7 +607,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                 href={`/dashboard/campaigns/${campaign.id}/heyreach`}
                 className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
               >
-                HeyReach test
+                Send to LinkedIn
               </a>
             )}
             <button
