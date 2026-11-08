@@ -440,7 +440,7 @@ export default function HomePage() {
             <span className="text-brand-beige text-sm font-display">ProspectIQ</span>
           </div>
           <p className="text-brand-charcoal-deep text-xs">
-            &copy; {new Date().getFullYear()} AI Wealth Partners Ltd. All rights reserved.
+            &copy; {new Date().getFullYear()} Dan Reddish Consulting Ltd. AI Wealth Partners is a trading name of Dan Reddish Consulting Ltd, registered in England and Wales, company number 14089334. Registered office: 10 Milton Court, Ravenshead, Nottingham, NG15 9BD.
           </p>
         </div>
       </footer>
