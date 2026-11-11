@@ -107,7 +107,7 @@ export function matchPerson(prospectName: string, names: string[]): PersonMatch 
   return { matched: false }
 }
 
-export type DecisionVerdict = 'sole' | 'shared' | 'board' | 'group' | 'not_director' | 'unknown'
+export type DecisionVerdict = 'sole' | 'holding' | 'shared' | 'board' | 'group' | 'not_director' | 'unknown'
 
 export interface DecisionMaker {
   verdict: DecisionVerdict
@@ -129,7 +129,8 @@ function isDirectorRole(role: string): boolean {
  *   sole          the only director
  *   shared        one of two directors
  *   board         three or more directors
- *   group         owned or controlled by another company
+ *   holding       the only director, but the shares sit in another company
+ *   group         owned or controlled by another company, with other directors
  *   not_director  the firm matched but they are not a director of it
  *   unknown       no Companies House record matched
  */
@@ -151,6 +152,15 @@ export function assessDecisionMaker(
   const base = { directors, owners, registeredName }
   const first = prospectName.split(/\s+/)[0]
 
+  // The only director, with the shares in another company: often their own
+  // holding company, sometimes a group. Not marked down as hard as a group.
+  if (corporateOwner && person.matched && directors.length === 1) {
+    return {
+      verdict: 'holding',
+      summary: `${first} is the only director of ${companyName}, which is owned through ${corporateOwner.name}. If that is ${first}'s own holding company there is no board to consult. Worth a check.`,
+      ...base,
+    }
+  }
   if (corporateOwner) {
     return { verdict: 'group', summary: `${companyName} is owned or controlled by ${corporateOwner.name}, so decisions are likely to involve the parent company.`, ...base }
   }
@@ -189,6 +199,7 @@ export function accessibilityBounds(verdict: DecisionVerdict): { min: number; ma
   switch (verdict) {
     case 'sole': return { min: 8, max: 10 }
     case 'shared': return { min: 5, max: 8 }
+    case 'holding': return { min: 4, max: 8 }
     case 'board':
     case 'group':
     case 'not_director': return { min: 1, max: 3 }

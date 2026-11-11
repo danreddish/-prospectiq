@@ -80,7 +80,7 @@ Finish with JSON only, no other text after your research:
   "yrs_at_sr_level": 0,
   "scores": {"wealth": 0, "timing": 0, "accessibility": 0, "complexity": 0}
 }
-Give 4 to 8 findings. yrs_at_sr_level comes from the career history or the company's incorporation date, or 0 if unknown.`
+Give 4 to 8 findings. Do not repeat the decision-maker check as a finding: it is shown separately. yrs_at_sr_level comes from the career history or the company's incorporation date, or 0 if unknown.`
 }
 
 type Block = { type: string; text?: string; content?: unknown; name?: string }

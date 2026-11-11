@@ -11,6 +11,7 @@ import type { DecisionVerdict } from '@/lib/deep-research/matching'
 export const DECISION_LABELS: Record<DecisionVerdict, { label: string; tone: 'good' | 'ok' | 'bad' | 'none' }> = {
   sole: { label: 'Decides alone', tone: 'good' },
   shared: { label: 'Two directors', tone: 'ok' },
+  holding: { label: 'Sole director, holding company', tone: 'ok' },
   board: { label: 'Board of directors', tone: 'bad' },
   group: { label: 'Owned by a group', tone: 'bad' },
   not_director: { label: 'Not a director', tone: 'bad' },
@@ -160,6 +161,11 @@ export default function DeepResearchPanel({
               </li>
             ))}
           </ul>
+        )}
+        {state.outreach_written === false && (
+          <p className="text-amber-300 text-xs mt-3">
+            The messages were not rewritten from these findings{state.outreach_error ? `: ${state.outreach_error}` : '.'} Use Write outreach on the outreach tab, or run deep research again.
+          </p>
         )}
         {state.web_search === false && (
           <p className="text-amber-300 text-xs mt-3">The firm&apos;s website was not read: web search is not switched on for the Anthropic key.</p>

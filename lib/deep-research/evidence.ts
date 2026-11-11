@@ -195,7 +195,8 @@ async function fcaEvidence(input: EvidenceInput): Promise<(FcaEvidence & { _comp
   return {
     frn: firm.referenceNumber,
     name: profile?.name || firm.name,
-    status: profile?.status || firm.status,
+    // The register sometimes answers "See full details" here: fall back to the search result or the business type.
+    status: [profile?.status, firm.status, profile?.business_type].find((v) => v && !/see full details/i.test(v)) || 'Unknown',
     business_type: profile?.business_type || null,
     individuals,
     website: profile?.website || null,

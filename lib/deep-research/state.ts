@@ -24,6 +24,9 @@ export interface DeepResearchState {
   searches?: number
   web_search?: boolean
   model?: string
+  /** False when the research finished but the messages could not be written. */
+  outreach_written?: boolean
+  outreach_error?: string
   /** The quick first-pass score, kept so the change is visible. */
   first_pass?: { total_score: number | null; tier: string | null }
 }
@@ -48,7 +51,8 @@ export function deepResearchInProgress(state: DeepResearchState | null | undefin
 export function deepResearchCanStart(state: DeepResearchState | null | undefined): boolean {
   if (!state) return true
   if (state.status === 'failed') return true
-  if (state.status === 'done') return false
+  // Finished, but the messages were never written from the findings: allow another go.
+  if (state.status === 'done') return state.outreach_written !== true
   return !deepResearchInProgress(state)
 }
 

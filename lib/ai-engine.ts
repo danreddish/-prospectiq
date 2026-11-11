@@ -334,7 +334,9 @@ export async function writeOutreachSequence(
   try {
     response = await getAnthropic().messages.create({
       model: opts.model || 'claude-haiku-4-5-20251001',
-      max_tokens: 900,
+      // The fast route keeps 900 to stay inside 10 seconds. The background job
+      // has time, and the stronger model was cut off mid-answer at 900.
+      max_tokens: opts.model ? 3000 : 900,
       system: `Write LinkedIn outreach for a financial services professional. Return JSON only.
 Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}
 

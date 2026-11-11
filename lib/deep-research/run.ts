@@ -97,15 +97,12 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       { senderName, niche, serviceLines: serviceLines(campaignSp, accountSp), customInstructions }
     )
 
-    // The decision-maker check always leads the findings.
-    const findings: Finding[] = [
-      ...(evidence.decision_maker.verdict !== 'unknown' ? [{ fact: evidence.decision_maker.summary, source: 'Companies House' }] : []),
-      ...analysis.findings,
-    ].slice(0, 9)
+    const findings: Finding[] = analysis.findings
 
     // Messages from the verified findings. If this fails, the research still stands.
     await stage(2)
     let outreach: unknown = undefined
+    let outreachError = ''
     try {
       outreach = await writeOutreachSequence(
         {
@@ -132,7 +129,8 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
         { model: analysis.model, timeoutMs: 60000, maxRetries: 2 }
       )
     } catch (err) {
-      console.error('[DeepResearch] Outreach failed, research kept:', err instanceof Error ? err.message : err)
+      outreachError = plainError(err instanceof Error ? err.message : 'Could not write the messages')
+      console.error('[DeepResearch] Outreach failed, research kept:', outreachError)
     }
 
     const done: DeepResearchState = {
@@ -148,6 +146,8 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       searches: analysis.searches,
       web_search: analysis.web_search,
       model: analysis.model,
+      outreach_written: !!outreach,
+      ...(outreachError ? { outreach_error: outreachError } : {}),
       first_pass,
     }
     const ch = evidence.companies_house
@@ -161,7 +161,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       tier: analysis.tier,
       ...(evidence.age ? { est_age: String(evidence.age) } : {}),
       ...(ch ? { company_number: ch.company_number, accounts_last_filed: ch.accounts_made_up_to } : {}),
-      ...(outreach ? { outreach } : {}),
+      outreach: outreach || {},
     })
     if (saveError) throw new Error(`Could not save the research: ${saveError.message}`)
     console.log(`[DeepResearch] Done ${prospect.name} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ${analysis.total_score}/40, ${analysis.fit} fit, ${analysis.searches} searches`)
