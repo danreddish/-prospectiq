@@ -400,3 +400,110 @@ export function leadLookup(reply: HeyReachReply): 'found' | 'not_found' | 'unkno
   if (!reply.body || typeof reply.body !== 'object') return 'not_found'
   return pick(reply.body, 'id', 'leadId', 'profileUrl', 'linkedin_id') ? 'found' : 'not_found'
 }
+
+// ── v80: setting up a client's campaign ──
+//
+// From HeyReach's Campaign API (beta, April 2026) and its public API:
+//   POST /li_account/GetAll {offset, limit}        the workspace's LinkedIn senders
+//   GET  /campaign/GetCampaignSequence?campaignId= a campaign's sequence tree
+//   POST /list/CreateEmptyList {name, type}        type USER_LIST for leads
+//   POST /campaign/Create                          {campaignId}; created as DRAFT
+//   POST /campaign/StartCampaign                   campaignId (sent as query and body)
+// Field names in the replies aren't documented, so they're read defensively.
+
+export interface HeyReachSender {
+  id: number
+  name: string
+  email: string | null
+  /** false when HeyReach says the LinkedIn login needs reconnecting; null when it doesn't say */
+  authValid: boolean | null
+  active: boolean | null
+}
+
+function bool(v: unknown): boolean | null {
+  return typeof v === 'boolean' ? v : null
+}
+
+/** The LinkedIn accounts connected to a workspace (up to 300). */
+export async function listHeyReachSenders(apiKey?: string, timeoutMs = 4000): Promise<HeyReachSender[]> {
+  const out: HeyReachSender[] = []
+  const limit = 100
+  for (let offset = 0; offset < 300; offset += limit) {
+    const reply = await heyReachRequest('/li_account/GetAll', { body: { offset, limit }, timeoutMs, apiKey })
+    if (!reply.ok) throw new Error(`HeyReach LinkedIn accounts returned ${reply.status}: ${reply.text.slice(0, 200)}`)
+    const body = payload(reply.body)
+    const items = pick<unknown[]>(body, 'items', 'accounts', 'data') || (Array.isArray(body) ? (body as unknown[]) : [])
+    for (const a of items) {
+      const id = Number(pick(a, 'id', 'accountId', 'linkedInAccountId'))
+      if (!Number.isFinite(id) || id <= 0) continue
+      const name = [str(pick(a, 'firstName')), str(pick(a, 'lastName'))].filter(Boolean).join(' ') || str(pick(a, 'fullName', 'name')) || `Account ${id}`
+      out.push({
+        id,
+        name,
+        email: str(pick(a, 'emailAddress', 'email')),
+        authValid: bool(pick(a, 'authIsValid', 'isAuthValid', 'authValid')),
+        active: bool(pick(a, 'isActive', 'active')),
+      })
+    }
+    const total = Number(pick(body, 'totalCount', 'total') || 0)
+    if (items.length < limit || offset + limit >= total) break
+  }
+  return out
+}
+
+/** The raw GetCampaignSequence reply (heyreach-sequence.ts reads it). */
+export async function getHeyReachCampaignSequence(campaignId: number, apiKey?: string, timeoutMs = 4000): Promise<HeyReachReply> {
+  return heyReachRequest(`/campaign/GetCampaignSequence?campaignId=${campaignId}`, { method: 'GET', timeoutMs, apiKey })
+}
+
+function idFrom(body: unknown, ...keys: string[]): number | null {
+  const direct = typeof body === 'number' ? body : Number(pick(payload(body), ...keys))
+  return Number.isFinite(direct) && direct > 0 ? direct : null
+}
+
+/** A new, empty lead list for a campaign to read from. */
+export async function createHeyReachLeadList(name: string, apiKey?: string, timeoutMs = 4000): Promise<{ listId: number | null; reply: HeyReachReply }> {
+  const reply = await heyReachRequest('/list/CreateEmptyList', { body: { name, type: 'USER_LIST' }, timeoutMs, apiKey })
+  return { listId: reply.ok ? idFrom(reply.body, 'id', 'listId', 'linkedInUserListId') : null, reply }
+}
+
+export interface CreateCampaignInput {
+  name: string
+  listId: number
+  linkedInAccountIds: number[]
+  schedule: Record<string, unknown>
+  sequence: unknown
+}
+
+/** Creates a campaign in DRAFT. Leaves out anyone this workspace has already messaged elsewhere. */
+export async function createHeyReachCampaign(input: CreateCampaignInput, apiKey?: string, timeoutMs = 5000): Promise<{ campaignId: number | null; reply: HeyReachReply }> {
+  const reply = await heyReachRequest('/campaign/Create', {
+    body: {
+      name: input.name,
+      linkedInUserListId: input.listId,
+      linkedInAccountIds: input.linkedInAccountIds,
+      excludeContactedFromOtherCampaigns: true,
+      excludeHasOtherAccConversations: true,
+      excludeContactedFromSenderInOtherCampaign: true,
+      schedule: input.schedule,
+      sequence: input.sequence,
+    },
+    timeoutMs,
+    apiKey,
+  })
+  return { campaignId: reply.ok ? idFrom(reply.body, 'campaignId', 'id') : null, reply }
+}
+
+/** Starts (activates) a campaign. The campaign ID goes in the query and the body, as the docs don't say which. */
+export async function startHeyReachCampaign(campaignId: number, apiKey?: string, timeoutMs = 4000): Promise<HeyReachReply> {
+  return heyReachRequest(`/campaign/StartCampaign?campaignId=${campaignId}`, { body: { campaignId }, timeoutMs, apiKey })
+}
+
+/** HeyReach's own error message from a reply, if it gave one. */
+export function heyReachError(reply: HeyReachReply): string {
+  const b = reply.body
+  const fromBody = typeof b === 'string' ? b : str(pick(b, 'message', 'error', 'title', 'detail'))
+  const errors = pick<Record<string, unknown>>(b, 'errors')
+  const detail = errors && typeof errors === 'object' ? Object.values(errors).flat().filter((e) => typeof e === 'string').join(' ') : ''
+  return [fromBody, detail].filter(Boolean).join(' ').slice(0, 300) || `HTTP ${reply.status}`
+}

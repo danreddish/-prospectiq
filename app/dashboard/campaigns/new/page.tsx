@@ -93,17 +93,21 @@ export default function CampaignsPage() {
   }, [searchParams])
 
   // v77: how many LinkedIn exclusions (e.g. a Ulinc export) this account has.
-  // The route is admin-only for now, so for everyone else this stays null and
-  // the "skip" option is hidden.
+  // v80: the route answers anyone who can send to LinkedIn (admins, and
+  // clients with a campaign they may send into). For them, "exact LinkedIn
+  // profile" starts ticked, because nobody without one can be sent. For
+  // everyone else this stays null and both stay as they were.
   useEffect(() => {
     fetch('/api/heyreach/exclusions', { cache: 'no-store' })
       .then((r) => {
-        // 404 = not an admin. Anything else is a real failure worth showing.
+        // 404 = can't send to LinkedIn. Anything else is a real failure worth showing.
         if (!r.ok && r.status !== 404) toast.error('Could not load your Ulinc contacts list. Find will not skip them this time.')
         return r.ok ? r.json() : null
       })
       .then((d) => {
         if (d && typeof d.total === 'number') {
+          setCanSendLinkedIn(true)
+          setExactProfileOnly(true)
           setExclusionCount(d.total)
           if (d.total > 0) setSkipExcluded(true)
         }
@@ -139,6 +143,8 @@ export default function CampaignsPage() {
   const [exactProfileOnly, setExactProfileOnly] = useState(false)
   const [skipExcluded, setSkipExcluded] = useState(false)
   const [exclusionCount, setExclusionCount] = useState<number | null>(null)
+  // v80: this account can send to LinkedIn (see the exclusions check above)
+  const [canSendLinkedIn, setCanSendLinkedIn] = useState(false)
   const [findingStatus, setFindingStatus] = useState('')
   const [findMeta, setFindMeta] = useState<{
     firmsSearched: number
@@ -803,6 +809,12 @@ export default function CampaignsPage() {
                   </button>
                 ))}
               </div>
+              {/* v80: only Apollo gives exact LinkedIn profiles */}
+              {canSendLinkedIn && prospectSource !== 'global_prospects' && (
+                <p className="text-brand-rose-gold text-xs mt-2">
+                  Sending these on LinkedIn? Pick Global Prospects. The other sources rarely have an exact LinkedIn profile, so their prospects can&apos;t be sent.
+                </p>
+              )}
               {/* v77: Global (Apollo) filters, applied before any research */}
               {prospectSource === 'global_prospects' && (
                 <div className="mt-3 space-y-2">
@@ -952,6 +964,11 @@ export default function CampaignsPage() {
                 </button>
               ))}
             </div>
+            {canSendLinkedIn && prospectSource !== 'global_prospects' && (
+              <p className="text-brand-rose-gold text-xs mt-2">
+                Sending these on LinkedIn? Pick Global Prospects. The other sources rarely have an exact LinkedIn profile, so their prospects can&apos;t be sent.
+              </p>
+            )}
           </div>
 
           {/* ICP input */}

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import { linkedInProfileSlug } from '@/lib/linkedin'
 import { cleanPersonName } from '@/lib/names'
+import { downloadCompliancePack } from '@/lib/compliance-pack'
 import {
   HEYREACH_MESSAGE_FIELDS,
   HEYREACH_MESSAGE_LABELS,
@@ -149,6 +150,30 @@ export default function HeyReachTest({
         return next
       })
     }
+  }
+
+  // v80: everyone written for and not yet sent or rejected, as saved, in one
+  // Word document for the adviser's compliance team.
+  const forCompliance = inTest.filter((r) => r.heyreach?.status === 'draft' || r.heyreach?.status === 'approved')
+  function compliancePack() {
+    const unsaved = forCompliance.filter((r) => drafts[r.id]).map((r) => cleanPersonName(r.name))
+    if (unsaved.length) {
+      toast.error(`Save or undo your edits for ${unsaved.join(', ')} first, so the pack matches what's saved.`)
+      return
+    }
+    downloadCompliancePack(
+      campaign.name,
+      forCompliance.map((r) => {
+        const s = withNames(r, r.heyreach || {})
+        return {
+          name: [s.first_name, s.last_name].filter(Boolean).join(' ') || cleanPersonName(r.name),
+          role: r.role,
+          company: r.company,
+          profileUrl: s.profile_url || r.linkedin_url,
+          messages: s.msgs || {},
+        }
+      })
+    )
   }
 
   function draftFor(r: TestRow): HeyReachState {
@@ -360,7 +385,19 @@ export default function HeyReachTest({
 
       {/* Review */}
       <section className="space-y-4">
-        <h2 className="text-brand-cream font-semibold">2. Review, edit, approve or reject</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-brand-cream font-semibold">2. Review, edit, approve or reject</h2>
+          {forCompliance.length > 0 && (
+            <button onClick={compliancePack} className="btn-secondary text-xs px-3 py-1.5" title="Every saved message for the people not yet sent, in one Word document">
+              Download for compliance ({forCompliance.length})
+            </button>
+          )}
+        </div>
+        {forCompliance.length > 0 && (
+          <p className="text-brand-beige text-xs">
+            Need sign-off first? Save each person&apos;s messages, download them as one Word document and send it to compliance. Approve once it&apos;s cleared.
+          </p>
+        )}
         {campaign.customInstructions && (
           <p className="text-brand-beige text-xs mt-1 mb-3">
             Campaign instructions to check against: <span className="text-brand-cream">{campaign.customInstructions}</span>
