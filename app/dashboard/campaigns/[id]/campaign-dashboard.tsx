@@ -889,7 +889,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               <p className="text-brand-beige text-[10px] mt-2">About a minute each. You can carry on using the page.</p>
             )}
             {deepStripFinished === deepStrip.length && deepStripDone > 0 && (
-              <p className="text-brand-beige text-[10px] mt-2">Open a person and click the Research tab to see what was found.</p>
+              <p className="text-brand-beige text-[10px] mt-2">Open a person and click Research Notes to see what was found.</p>
             )}
           </div>
         )}
