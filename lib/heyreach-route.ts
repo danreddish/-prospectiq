@@ -115,7 +115,7 @@ export async function loadTestProspect(
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, headline, linkedin_url, status, research_notes, key_trigger, total_score, heyreach, deep_research')
+      .select('id, campaign_id, name, role, company, location, headline, linkedin_url, status, research_notes, key_trigger, total_score, heyreach')
       .eq('id', prospectId)
       .eq('user_id', userId)
       .maybeSingle(),
@@ -129,6 +129,11 @@ export async function loadTestProspect(
   ])
   const prospect = prospectRes.data as TestProspect | null
   const campaign = campaignRes.data as TestCampaign | null
+  // v81: read on its own, so this still works before migration 012 adds the column.
+  if (prospect) {
+    const deepRes = await supabase.from('prospects').select('deep_research').eq('id', prospectId).maybeSingle()
+    prospect.deep_research = ((deepRes.data as { deep_research?: unknown } | null)?.deep_research || null) as DeepResearchState | null
+  }
   // Recruitment (adviser) campaigns are not part of the HeyReach test.
   if (!prospect || !campaign || prospect.campaign_id !== campaign.id || campaign.purpose === 'advisers') {
     return { response: NextResponse.json({ error: 'Prospect not found' }, { status: 404 }) }

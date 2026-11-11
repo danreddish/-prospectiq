@@ -166,7 +166,8 @@ export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
   }
   if (!companies_house) missing.push('Companies House: no company matched by name')
 
-  const companyName = companies_house?.company_name || input.company || 'the firm'
+  // The firm as the prospect writes it reads better than the register's capitals.
+  const companyName = input.company || companies_house?.company_name || 'the firm'
   const decision_maker = assessDecisionMaker(input.name, companyName, companies_house ? match!.officers : null, pscs)
 
   // Their age, from the officer record, only when they were matched as a director.

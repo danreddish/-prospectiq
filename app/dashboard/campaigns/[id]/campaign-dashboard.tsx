@@ -1,6 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import DeepResearchPanel, { DeepResearchChips, deepState } from './deep-research-panel'
+import { deepResearchCanStart, deepResearchInProgress } from '@/lib/deep-research/state'
 import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption, ADVISER_SCORE_LABELS, AdviserFcaData } from '@/types'
 import { toast } from 'sonner'
 import {
@@ -91,6 +94,73 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set())
   const [researching, setResearching] = useState(false)
   const [researchProgress, setResearchProgress] = useState({ completed: 0, total: 0 })
+
+  // ── v81: deep research ──────────────────────
+  // The background job re-scores each person and rewrites their notes and
+  // outreach. While any are running, ask every 10 seconds how they are
+  // getting on, and refresh the page's data whenever one finishes.
+  const router = useRouter()
+  const [deepStarting, setDeepStarting] = useState(false)
+  const deepRunning = prospects.filter((p) => deepResearchInProgress(deepState(p))).length
+  const deepEligible = isAdviser ? [] : prospects.filter((p) => deepResearchCanStart(deepState(p)))
+  const lastInProgress = useRef(deepRunning)
+
+  useEffect(() => {
+    // Fresh data from the server: keep showing the same person, with their new details.
+    setSelected((prev) => (prev ? prospects.find((p) => p.id === prev.id) || prev : prev))
+  }, [prospects])
+
+  useEffect(() => {
+    if (deepRunning === 0) return
+    lastInProgress.current = deepRunning
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/prospects/deep-research?campaign_id=${campaign.id}`, { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json()
+        if (typeof data.in_progress === 'number' && data.in_progress < lastInProgress.current) {
+          lastInProgress.current = data.in_progress
+          router.refresh()
+        }
+      } catch {}
+    }, 10000)
+    return () => clearInterval(timer)
+  }, [deepRunning, campaign.id, router])
+
+  async function startDeepResearch(ids: string[]) {
+    if (ids.length === 0 || deepStarting) return
+    setDeepStarting(true)
+    let started = 0
+    let lastReason = ''
+    try {
+      // Five at a time, so each request stays short.
+      for (let i = 0; i < ids.length; i += 5) {
+        const res = await fetch('/api/prospects/deep-research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaign_id: campaign.id, prospect_ids: ids.slice(i, i + 5) }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          lastReason = data.error || 'Could not start deep research'
+          break
+        }
+        started += data.started || 0
+        const refused = (data.results || []).find((r: { started: boolean; reason?: string }) => !r.started)
+        if (refused?.reason) lastReason = refused.reason
+      }
+      if (started > 0) {
+        toast.success(`Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`)
+        router.refresh()
+      } else {
+        toast.error(lastReason || 'Could not start deep research')
+      }
+    } catch {
+      toast.error('Could not start deep research')
+    } finally {
+      setDeepStarting(false)
+    }
+  }
 
   // Reply Coach state
   const [replyInput, setReplyInput] = useState('')
@@ -722,6 +792,20 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             >
               Export PDF
             </button>
+            {(deepEligible.length > 0 || deepRunning > 0) && (
+              <button
+                onClick={() => startDeepResearch(deepEligible.map((p) => p.id))}
+                disabled={deepStarting || deepEligible.length === 0}
+                title="Reads Companies House, the FCA Register, each LinkedIn profile and the firm's website, then re-scores and rewrites the outreach"
+                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors disabled:opacity-60"
+              >
+                {deepRunning > 0 && deepEligible.length === 0
+                  ? `Researching ${deepRunning}...`
+                  : deepStarting
+                    ? 'Starting...'
+                    : `Deep research (${deepEligible.length})`}
+              </button>
+            )}
           </div>
         </div>
 
@@ -803,6 +887,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                     Phone
                   </span>
                 )}
+                {!isAdviser && <DeepResearchChips prospect={prospect} />}
                 {isAdviser && (
                   prospect.fca_irn ? (
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400">FCA</span>
@@ -1056,8 +1141,18 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                     />
                   ))}
 
+                {!isAdviser && deepResearchInProgress(deepState(selected)) && (
+                  <div className="rounded-xl border border-brand-rose-gold/30 p-5 text-center mb-4">
+                    <p className="text-brand-cream text-sm">Deep research is running for {selectedName}.</p>
+                    <p className="text-brand-beige text-xs mt-1">
+                      The outreach is written from what it finds, in about a minute. This page updates by itself.
+                    </p>
+                  </div>
+                )}
+
                 {!isAdviser &&
                   selected.status === 'completed' &&
+                  !deepResearchInProgress(deepState(selected)) &&
                   !selected.outreach?.step1 &&
                   !selected.outreach?.step2 &&
                   !selected.outreach?.step3 && (
@@ -1250,6 +1345,9 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                 </div>
 
                 {isAdviser && <AdviserResearchPanel prospect={selected} />}
+                {!isAdviser && (
+                  <DeepResearchPanel prospect={selected} running={deepStarting} onRun={() => startDeepResearch([selected.id])} />
+                )}
 
                 {/* Contact Methods */}
                 <div className="mt-6 bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal">

@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, headline, status, outreach, research_notes, key_trigger, deep_research')
+      .select('id, campaign_id, name, role, company, location, headline, status, outreach, research_notes, key_trigger')
       .eq('id', prospect_id)
       .eq('user_id', user.id)
       .maybeSingle(),
@@ -85,11 +85,15 @@ export async function POST(req: NextRequest) {
   // their LinkedIn profile and the firm's website, re-scores them and writes
   // the outreach from what it found. If the job cannot be started, carry on
   // and write the outreach here as before.
-  const deep = (prospect.deep_research || null) as DeepResearchState | null
+  // Read on its own, so that before migration 012 has been run (no
+  // deep_research column yet) this route still works exactly as it did.
+  const deepRes = await supabase.from('prospects').select('deep_research').eq('id', prospect.id).maybeSingle()
+  const deepColumnReady = !deepRes.error
+  const deep = ((deepRes.data as { deep_research?: unknown } | null)?.deep_research || null) as DeepResearchState | null
   if (deepResearchInProgress(deep)) {
     return NextResponse.json({ ok: true, deferred: true })
   }
-  if (!deep && deepResearchEnabled()) {
+  if (!deep && deepColumnReady && deepResearchEnabled()) {
     const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString() }
     const { error: queueError } = await admin.from('prospects').update({ deep_research: queued }).eq('id', prospect.id).eq('user_id', user.id)
     if (!queueError && (await triggerDeepResearch(req.nextUrl.origin, prospect.id))) {

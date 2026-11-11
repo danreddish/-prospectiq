@@ -118,6 +118,8 @@ export interface Prospect {
   fca_firm_name: string | null
   fca_status: string | null
   fca_data: AdviserFcaData | null
+  /** v81: deep research state, evidence and findings. Null before it has run. */
+  deep_research?: import('../lib/deep-research/state').DeepResearchState | null
   created_at: string
   updated_at: string
 }
