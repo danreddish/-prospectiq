@@ -104,6 +104,18 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const deepRunning = prospects.filter((p) => deepResearchInProgress(deepState(p))).length
   const deepEligible = isAdviser ? [] : prospects.filter((p) => deepResearchCanStart(deepState(p)))
   const lastInProgress = useRef(deepRunning)
+  // Tick boxes on the cards: run deep research on just these. None ticked = everyone eligible.
+  const [deepPicked, setDeepPicked] = useState<Set<string>>(new Set())
+  const deepPickedIds = deepEligible.filter((p) => deepPicked.has(p.id)).map((p) => p.id)
+  const deepTargetIds = deepPickedIds.length > 0 ? deepPickedIds : deepEligible.map((p) => p.id)
+  function toggleDeepPick(id: string) {
+    setDeepPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   useEffect(() => {
     // Fresh data from the server: keep showing the same person, with their new details.
@@ -151,6 +163,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
       }
       if (started > 0) {
         toast.success(`Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`)
+        setDeepPicked(new Set())
         router.refresh()
       } else {
         toast.error(lastReason || 'Could not start deep research')
@@ -794,16 +807,18 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             </button>
             {(deepEligible.length > 0 || deepRunning > 0) && (
               <button
-                onClick={() => startDeepResearch(deepEligible.map((p) => p.id))}
+                onClick={() => startDeepResearch(deepTargetIds)}
                 disabled={deepStarting || deepEligible.length === 0}
-                title="Reads Companies House, the FCA Register, each LinkedIn profile and the firm's website, then re-scores and rewrites the outreach"
+                title="Reads Companies House, the FCA Register, each LinkedIn profile and the firm's website, then re-scores and rewrites the outreach. Tick people in the list to run it on just those."
                 className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors disabled:opacity-60"
               >
                 {deepRunning > 0 && deepEligible.length === 0
                   ? `Researching ${deepRunning}...`
                   : deepStarting
                     ? 'Starting...'
-                    : `Deep research (${deepEligible.length})`}
+                    : deepPickedIds.length > 0
+                      ? `Deep research (${deepPickedIds.length} ticked)`
+                      : `Deep research (all ${deepEligible.length})`}
               </button>
             )}
           </div>
@@ -845,6 +860,36 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               }}
             >
               <div className="flex items-start justify-between gap-2">
+                {/* v81: tick to include in deep research. A span, because a card is already a button. */}
+                {!isAdviser && deepResearchCanStart(deepState(prospect)) && (
+                  <span
+                    role="checkbox"
+                    aria-checked={deepPicked.has(prospect.id)}
+                    aria-label={`Include ${cleanPersonName(prospect.name)} in deep research`}
+                    title="Tick to include in deep research"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleDeepPick(prospect.id)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        toggleDeepPick(prospect.id)
+                      }
+                    }}
+                    className={`w-4 h-4 rounded border mt-0.5 flex-shrink-0 flex items-center justify-center cursor-pointer ${
+                      deepPicked.has(prospect.id) ? 'bg-brand-rose-gold border-brand-rose-gold' : 'border-brand-beige/50 hover:border-brand-rose-gold'
+                    }`}
+                  >
+                    {deepPicked.has(prospect.id) && (
+                      <svg className="w-3 h-3 text-brand-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </span>
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="text-brand-cream text-sm font-semibold truncate">{cleanPersonName(prospect.name)}</p>
                   <p className="text-brand-beige text-xs truncate mt-0.5">
