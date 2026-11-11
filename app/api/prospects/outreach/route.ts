@@ -4,6 +4,7 @@ import { deepResearchInProgress, researchContext, type DeepResearchState } from 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { writeOutreachSequence } from '@/lib/ai-engine'
 import { z } from 'zod'
+import { voiceSampleFrom } from '@/lib/voice'
 
 // v76.2: the second half of research. /api/prospects/research scores the
 // prospect and saves it; this writes the LINK Method sequence for it. Splitting
@@ -132,6 +133,7 @@ export async function POST(req: NextRequest) {
         senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
         serviceProfile,
         customInstructions: campaign.custom_instructions || null,
+        voiceSample: voiceSampleFrom(profile?.service_profile),
       },
       { timeoutMs: OUTREACH_DEADLINE_MS - (Date.now() - startedAt) - SAVE_RESERVE_MS }
     )

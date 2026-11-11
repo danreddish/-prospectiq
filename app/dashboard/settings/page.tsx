@@ -6,6 +6,8 @@ import { toast } from 'sonner'
 import { PLANS, RECRUITMENT_PLAN, ADVISER_TYPES, PERMISSION_OPTIONS, PLAN_LIMITS } from '@/types'
 import { recruitmentAccess } from '@/lib/recruitment/access-rules'
 
+import { VOICE_SAMPLE_MAX } from '@/lib/voice'
+
 export default function SettingsPage() {
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -19,6 +21,8 @@ export default function SettingsPage() {
   const [serviceOutcomes, setServiceOutcomes] = useState('')
   const [serviceThreshold, setServiceThreshold] = useState('')
   const [serviceGeo, setServiceGeo] = useState('')
+  // v81: messages the user has really sent, so outreach is written in their voice
+  const [voiceSample, setVoiceSample] = useState('')
   const [linkedinUrl, setLinkedinUrl] = useState('')
   const [aboutText, setAboutText] = useState('')
   const [importing, setImporting] = useState(false)
@@ -64,6 +68,7 @@ export default function SettingsPage() {
       setServiceOutcomes(sp.key_outcomes || '')
       setServiceThreshold(sp.minimum_threshold || '')
       setServiceGeo(sp.geographic_focus || '')
+      setVoiceSample(sp.voice_sample || '')
       const rp = data.recruitment_profile || {}
       setRecFirmName(rp.firm_name || '')
       setRecProposition(rp.proposition || '')
@@ -143,6 +148,7 @@ export default function SettingsPage() {
           key_outcomes: serviceOutcomes.trim() || null,
           minimum_threshold: serviceThreshold.trim() || null,
           geographic_focus: serviceGeo.trim() || null,
+          voice_sample: voiceSample.trim().slice(0, VOICE_SAMPLE_MAX) || null,
         },
         updated_at: new Date().toISOString(),
       })
@@ -417,6 +423,20 @@ export default function SettingsPage() {
               />
               <p className="text-brand-beige text-xs mt-1">Where your clients are based.</p>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-brand-cream text-sm font-medium mb-1.5">Your voice</label>
+            <textarea
+              value={voiceSample}
+              onChange={(e) => setVoiceSample(e.target.value.slice(0, VOICE_SAMPLE_MAX))}
+              rows={8}
+              placeholder={'Paste three to five LinkedIn messages or emails you have really sent, one after another. Add a line on how you like to sound if it helps, e.g. "Plain and warm. Short sentences. I sign off Best, Sam."'}
+              className="w-full"
+            />
+            <p className="text-brand-beige text-xs mt-1">
+              Outreach is written to sound like these. Only the style is used: nothing in them is quoted or repeated to a prospect. {voiceSample.length}/{VOICE_SAMPLE_MAX} characters.
+            </p>
           </div>
 
           <button type="submit" className="btn-primary text-sm" disabled={saving}>

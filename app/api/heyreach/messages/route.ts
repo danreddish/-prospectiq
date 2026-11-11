@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { voiceSampleFrom } from '@/lib/voice'
 import { deepResearchInProgress, researchContext } from '@/lib/deep-research/state'
 import { z } from 'zod'
 import { writeHeyReachMessages } from '@/lib/ai-engine'
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
         senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
         serviceProfile: mergedServiceProfile(campaign, profile),
         customInstructions: campaign.custom_instructions || null,
+        voiceSample: voiceSampleFrom(profile?.service_profile),
       },
       part,
       part === 2 ? { msg_1: state.msgs?.msg_1, msg_2: state.msgs?.msg_2 } : null,

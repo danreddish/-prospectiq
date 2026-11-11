@@ -35,6 +35,8 @@ export interface ProspectFinancials {
 interface ResearchContext {
   niche: string
   senderName: string
+  /** v81: messages the sender has really written, for style only */
+  voiceSample?: string | null
   serviceProfile?: ServiceProfile
   customInstructions?: string | null
   financials?: ProspectFinancials | null
@@ -249,6 +251,29 @@ export interface OutreachResearchContext {
   findings?: { fact: string; source: string }[] | null
 }
 
+// v81: the message playbook. How a first conversation with a stranger is
+// earned, distilled from the direct-response and selling books Dan works
+// from (Schwartz on awareness, Cialdini on influence, Sugarman on first
+// lines, Blount on prospecting, Rackham on questions) and the LINK Method.
+// Principles in plain words, applied to every message the app writes.
+const MESSAGE_PLAYBOOK = `HOW TO WRITE THESE MESSAGES
+1. Start where they are. A new connection does not know the sender and is not thinking about the sender's subject. Early messages are about their world, in their words. The sender's solution stays out until they have shown interest.
+2. Work with what they already want. Do not try to create a want. Take it from what they say about themselves: their headline, who their firm says it serves, what it says it is building.
+3. Specific beats clever. One true detail about them is worth more than any general remark. With no specific detail, write a shorter message. Never pad.
+4. Give before asking. Offer one useful observation or a question worth thinking about, with nothing attached to it.
+5. Ask for a small yes. The only thing a message asks for is a reply to one easy question. Never a call, never a meeting.
+6. Ask about their situation. Never describe their problem to them. People believe what they say themselves, not what a stranger tells them.
+7. Proof only from people like them, and only real. If the sender's details give a result, it may be used once, late in the sequence, as one person's result. Otherwise no proof at all.
+8. Write as an equal. Plain, warm, sincere. No praise, no selling words, no urgency or scarcity.
+9. One idea per message. The first line has to earn the second: no warm-up such as "I hope you are well" or "I wanted to reach out".
+10. Make no an easy answer. The last message lets them go gracefully and leaves the door open.`
+
+function voiceBlock(sample: string | null | undefined): string {
+  const text = (sample || '').trim()
+  if (!text) return ''
+  return `\n\nTHE SENDER'S VOICE. These are messages the sender has really written. Write in this voice: their rhythm, sentence length, greetings, sign-off and how formal they are. Use it for style only. Do not copy their sentences, and take no facts, names, offers or claims from them. Where their style breaks a rule below, the rule wins.\n"""\n${text.slice(0, 3000)}\n"""`
+}
+
 /**
  * Research notes and the trigger are the app's own read of a name and a job
  * title, not findings. Handed to the message writer as that, so they shape
@@ -317,6 +342,8 @@ OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence th
 Step1 (Connection Request, hard limit 280 chars, aim for under 200): NO pitch, NO ask, NO mention of a call or meeting. One plain, specific reason for connecting, taken from their role, company, headline or a verified finding. No compliments: never "impressed by", "love what you're doing" or similar. The only goal is that they accept.
 Step2 (Welcome Message, hard limit 600 chars, aim for under 450): thank them for connecting. Stay curious and human. Ask ONE open question about their firm or role that they could answer in a line. Do not assume the answer or tell them what their problem is. NO pitch and NO call ask here either.
 Step3 (Value + Soft Door, hard limit 800 chars, aim for under 650): lead with one useful observation relevant to their kind of firm. You may say in ONE line what the sender works on, kept directional. Do not list the steps or parts of the sender's method. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share more, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
+
+${MESSAGE_PLAYBOOK}${voiceBlock(context.voiceSample)}
 
 ${messageRules(!!research?.verified)}
 British English. No financial advice. No guarantees. Peer tone.`,
@@ -472,6 +499,8 @@ Sender: ${context.senderName} | Who the sender is targeting: ${context.niche}${s
 
 THE FULL SEQUENCE (LINK Method order). You are writing ${keys.join(' and ')} only.
 ${heyReachBrief(instructions)}
+
+${MESSAGE_PLAYBOOK}${voiceBlock(context.voiceSample)}
 
 ${heyReachRules(!!research?.verified)}`,
       messages: [{

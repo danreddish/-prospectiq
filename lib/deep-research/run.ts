@@ -10,6 +10,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { writeOutreachSequence } from '../ai-engine'
+import { voiceSampleFrom } from '../voice'
 import { gatherEvidence, type Evidence } from './evidence'
 import { analyseProspect, type Finding } from './analyse'
 import type { DeepResearchState } from './state'
@@ -117,6 +118,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
             geographic_focus: campaignSp.geographic_focus || accountSp.geographic_focus || null,
           },
           customInstructions,
+          voiceSample: voiceSampleFrom(profile?.service_profile),
         },
         { model: analysis.model, timeoutMs: 60000, maxRetries: 2 }
       )
