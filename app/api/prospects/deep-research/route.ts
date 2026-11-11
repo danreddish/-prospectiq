@@ -65,7 +65,9 @@ export async function POST(req: NextRequest) {
       if (!deepResearchCanStart(state)) {
         return { id: row.id, started: false, reason: state?.status === 'done' ? 'Already done.' : 'Already running.' }
       }
-      const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString(), first_pass: state?.first_pass }
+      // Carry the count of earlier runs, so a retry is counted as one.
+      const attempts = state?.attempts || (state?.finished_at ? 1 : 0)
+      const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString(), first_pass: state?.first_pass, attempts }
       const { error: queueError } = await admin.from('prospects').update({ deep_research: queued }).eq('id', row.id).eq('user_id', user.id)
       if (queueError) return { id: row.id, started: false, reason: 'Could not queue it.' }
       const ok = await triggerDeepResearch(origin, row.id)

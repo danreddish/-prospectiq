@@ -24,6 +24,8 @@ export interface DeepResearchState {
   searches?: number
   web_search?: boolean
   model?: string
+  /** How many times the full research has run for this person. */
+  attempts?: number
   /** False when the research finished but the messages could not be written. */
   outreach_written?: boolean
   outreach_error?: string
@@ -52,7 +54,11 @@ export function deepResearchCanStart(state: DeepResearchState | null | undefined
   if (!state) return true
   if (state.status === 'failed') return true
   // Finished, but the messages were never written from the findings: allow another go.
-  if (state.status === 'done') return state.outreach_written !== true
+  if (state.status === 'done') {
+    if (state.outreach_written !== true) return true
+    // Who decides could not be worked out: one more go is allowed, as the matching may have improved.
+    return state.evidence?.decision_maker?.verdict === 'unknown' && (state.attempts || 1) < 2
+  }
   return !deepResearchInProgress(state)
 }
 

@@ -28,6 +28,8 @@ export interface DeepAnalysis {
   scores: ProspectScores
   total_score: number
   tier: 'A' | 'B' | 'C'
+  /** A Companies House number the web research turned up, when the registers gave none. */
+  company_number: string | null
   /** How many web searches ran, and whether web search was available at all. */
   searches: number
   web_search: boolean
@@ -78,6 +80,7 @@ Finish with JSON only, no other text after your research:
   "fit_reason": "one sentence",
   "wealth_estimate": "one of: Not assessed, £500K-1M, £1-3M, £3-5M, £5-10M, £10-25M, £25M+. Use Not assessed unless the evidence supports a range",
   "yrs_at_sr_level": 0,
+  "company_number": "the firm's Companies House company number, only if the evidence has no Companies House record and a page you read states it, otherwise null",
   "scores": {"wealth": 0, "timing": 0, "accessibility": 0, "complexity": 0}
 }
 Give 4 to 8 findings. Do not repeat the decision-maker check as a finding: it is shown separately. yrs_at_sr_level comes from the career history or the company's incorporation date, or 0 if unknown.`
@@ -231,6 +234,7 @@ ${evidenceLines(evidence).join('\n')}`
     fit_reason: str(raw.fit_reason),
     wealth_estimate: str(raw.wealth_estimate, 'Not assessed'),
     yrs_at_sr_level: clamp(raw.yrs_at_sr_level, 0, 60, 0),
+    company_number: /^[A-Za-z0-9]{6,8}$/.test(str(raw.company_number)) ? str(raw.company_number) : null,
     scores,
     total_score,
     tier: total_score >= 30 ? 'A' : total_score >= 22 ? 'B' : 'C',
@@ -238,4 +242,12 @@ ${evidenceLines(evidence).join('\n')}`
     web_search: webSearch,
     model,
   }
+}
+
+/** After the decision-maker check changes, bring the accessibility score and the total back into line. */
+export function reboundAccessibility(analysis: DeepAnalysis, verdict: Evidence['decision_maker']['verdict']): void {
+  const bounds = accessibilityBounds(verdict)
+  analysis.scores.accessibility = clamp(analysis.scores.accessibility, bounds.min, bounds.max, bounds.min)
+  analysis.total_score = (analysis.scores.wealth || 0) + (analysis.scores.timing || 0) + (analysis.scores.accessibility || 0) + (analysis.scores.complexity || 0)
+  analysis.tier = analysis.total_score >= 30 ? 'A' : analysis.total_score >= 22 ? 'B' : 'C'
 }

@@ -7,7 +7,14 @@ import type { CHOfficer, CHPsc } from '../data-sources/companies-house'
 
 const LEGAL_WORDS = new Set(['ltd', 'limited', 'llp', 'plc', 'lp', 'the', 'and', 'co', 'company', 'uk'])
 
-/** "Sweeny Wealth Management Ltd." -> "sweeny wealth management" */
+// A firm that trades as "Eleven.2" is registered as "11.2". Compare both as digits.
+const NUMBER_WORDS: Record<string, string> = {
+  zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+  eleven: '11', twelve: '12', thirteen: '13', fourteen: '14', fifteen: '15', sixteen: '16', seventeen: '17', eighteen: '18',
+  nineteen: '19', twenty: '20', thirty: '30', forty: '40', fifty: '50', hundred: '100',
+}
+
+/** "Sweeny Wealth Management Ltd." -> "sweeny wealth management"; "Eleven.2 Financial Planning" -> "11 2 financial planning" */
 export function normaliseCompanyName(name: string): string {
   return name
     .toLowerCase()
@@ -16,8 +23,23 @@ export function normaliseCompanyName(name: string): string {
     .replace(/[^a-z0-9 ]+/g, ' ')
     .split(/\s+/)
     .filter((w) => w && !LEGAL_WORDS.has(w))
+    .map((w) => NUMBER_WORDS[w] || w)
     .join(' ')
     .trim()
+}
+
+/**
+ * Other ways to search a register for this firm, when the name as given
+ * finds nothing: number words as digits ("Eleven.2" -> "11.2"), and the
+ * plain normalised words.
+ */
+export function alternativeCompanyQueries(name: string): string[] {
+  const out = new Set<string>()
+  const digits = name.replace(/[A-Za-z]+/g, (w) => NUMBER_WORDS[w.toLowerCase()] || w)
+  if (digits !== name) out.add(digits.replace(/\|.*$/, '').trim())
+  const plain = normaliseCompanyName(name)
+  if (plain && plain !== name.toLowerCase().trim()) out.add(plain)
+  return Array.from(out).filter((q) => q.length >= 3)
 }
 
 /** Same firm name, ignoring legal endings, punctuation and "&" against "and". */

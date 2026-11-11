@@ -11,8 +11,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { writeOutreachSequence } from '../ai-engine'
 import { voiceSampleFrom } from '../voice'
-import { gatherEvidence, type Evidence } from './evidence'
-import { analyseProspect, type Finding } from './analyse'
+import { attachCompanyByNumber, gatherEvidence, type Evidence } from './evidence'
+import { analyseProspect, reboundAccessibility, type Finding } from './analyse'
 import { DEEP_RESEARCH_STAGES, type DeepResearchState } from './state'
 
 /** An API error as one readable sentence, without the raw JSON. */
@@ -63,7 +63,8 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     admin.from('prospects').update({ deep_research: state, ...extra }).eq('id', prospectId)
 
   const first_pass = previous.first_pass || { total_score: prospect.total_score ?? null, tier: prospect.tier ?? null }
-  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, stage: DEEP_RESEARCH_STAGES[0] }
+  const attempts = (previous.attempts || 0) + 1
+  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, attempts, stage: DEEP_RESEARCH_STAGES[0] }
   await save(running)
   const stage = (n: number) => save({ ...running, stage: DEEP_RESEARCH_STAGES[n] })
 
@@ -79,7 +80,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     const customInstructions = (campaign?.custom_instructions as string | null) || null
 
     console.log(`[DeepResearch] Starting ${prospect.name} at ${prospect.company || 'unknown'}`)
-    const evidence = await gatherEvidence({
+    const evidenceInput = {
       name: prospect.name,
       role: prospect.role,
       company: prospect.company,
@@ -87,7 +88,8 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       linkedin_url: prospect.linkedin_url,
       headline: prospect.headline,
       company_number: prospect.company_number,
-    })
+    }
+    const evidence = await gatherEvidence(evidenceInput)
     console.log(`[DeepResearch] Evidence in ${Date.now() - startedAt}ms: CH ${evidence.companies_house ? evidence.companies_house.matched_by : 'none'}, FCA ${evidence.fca ? evidence.fca.status : 'none'}, profile ${evidence.profile ? 'yes' : 'none'}, decision ${evidence.decision_maker.verdict}`)
 
     await stage(1)
@@ -98,6 +100,16 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     )
 
     const findings: Finding[] = analysis.findings
+
+    // The registers had no company but the web research found its number:
+    // check it, and if this person is an officer, run the who-decides check.
+    if (!evidence.companies_house && analysis.company_number) {
+      const attached = await attachCompanyByNumber(evidenceInput, evidence, analysis.company_number)
+      if (attached) {
+        reboundAccessibility(analysis, evidence.decision_maker.verdict)
+        console.log(`[DeepResearch] Company ${analysis.company_number} confirmed from the web research: decision ${evidence.decision_maker.verdict}`)
+      }
+    }
 
     // Messages from the verified findings. If this fails, the research still stands.
     await stage(2)
@@ -147,6 +159,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       web_search: analysis.web_search,
       model: analysis.model,
       outreach_written: !!outreach,
+      attempts,
       ...(outreachError ? { outreach_error: outreachError } : {}),
       first_pass,
     }
@@ -169,7 +182,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Deep research failed'
     console.error(`[DeepResearch] FAILED ${prospect.name}:`, message)
-    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass })
+    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass, attempts })
     return { ok: false, error: message }
   }
 }

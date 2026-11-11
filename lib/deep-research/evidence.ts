@@ -19,6 +19,7 @@ import { isLinkedInProfileUrl } from '../linkedin'
 import {
   ageFromDob,
   assessDecisionMaker,
+  alternativeCompanyQueries,
   matchPerson,
   sameCompanyName,
   similarCompanyName,
@@ -45,7 +46,7 @@ export interface CompaniesHouseEvidence {
   sic_codes: string[]
   registered_town: string | null
   /** How the company was matched to the prospect. */
-  matched_by: 'stored number' | 'FCA Register' | 'name and director' | 'name only'
+  matched_by: 'stored number' | 'FCA Register' | 'name and director' | 'name only' | 'web search and director'
   url: string
 }
 
@@ -105,7 +106,14 @@ async function matchCompany(input: EvidenceInput, fcaCompanyNumber: string | nul
   }
   if (!input.company) return null
 
-  const results = await searchCompanies(input.company, 15)
+  // The name as given first, then other spellings ("Eleven.2" is registered as "11.2").
+  let results = await searchCompanies(input.company, 15)
+  let usable = results.filter((c) => c.companyStatus === 'active' && (sameCompanyName(c.title, input.company!) || similarCompanyName(c.title, input.company!)))
+  for (const query of usable.length ? [] : alternativeCompanyQueries(input.company)) {
+    results = await searchCompanies(query, 15)
+    usable = results.filter((c) => c.companyStatus === 'active' && (sameCompanyName(c.title, input.company!) || similarCompanyName(c.title, input.company!)))
+    if (usable.length) break
+  }
   const live = results.filter((c) => c.companyStatus === 'active')
   const exact = live.filter((c) => sameCompanyName(c.title, input.company!))
   const similar = live.filter((c) => !exact.includes(c) && similarCompanyName(c.title, input.company!))
@@ -126,6 +134,56 @@ async function matchCompany(input: EvidenceInput, fcaCompanyNumber: string | nul
   return fallback
 }
 
+/** The company's record, who decides, and the person's age, for a matched company. */
+async function companyDetails(
+  input: EvidenceInput,
+  match: CompanyMatch
+): Promise<{ companies_house: CompaniesHouseEvidence; decision_maker: DecisionMaker; age: number | null } | null> {
+  const [companyProfile, financials, pscs] = await Promise.all([
+    safe('Companies House profile', () => getCompanyProfile(match.number), null),
+    safe('Companies House accounts', () => getCompanyFinancials(match.number), null),
+    safe('Companies House owners', () => getCompanyPscs(match.number), [] as CHPsc[]),
+  ])
+  if (!companyProfile) return null
+  const companies_house: CompaniesHouseEvidence = {
+    company_number: match.number,
+    company_name: companyProfile.companyName,
+    status: companyProfile.companyStatus || null,
+    incorporated: companyProfile.dateOfCreation || null,
+    accounts: financials?.accountsCategory ? formatAccountsCategory(financials.accountsCategory) : null,
+    accounts_made_up_to: financials?.lastAccountsMadeUpTo || null,
+    sic_codes: companyProfile.sicCodes || [],
+    registered_town: companyProfile.address?.locality || null,
+    matched_by: match.matchedBy,
+    url: `https://find-and-update.company-information.service.gov.uk/company/${match.number}`,
+  }
+  // The firm as the prospect writes it reads better than the register's capitals.
+  const decision_maker = assessDecisionMaker(input.name, input.company || companies_house.company_name, match.officers, pscs)
+  // Their age, from the officer record, only when they were matched as a director.
+  const me = decision_maker.registeredName ? match.officers.find((o) => matchPerson(input.name, [o.name]).matched) : undefined
+  return { companies_house, decision_maker, age: ageFromDob(me?.dateOfBirth) }
+}
+
+/**
+ * A second chance at Companies House. When the name search found nothing
+ * (a trading name, say) but the web research turned up the company number,
+ * use it, but only if this person really is one of that company's officers.
+ * Returns true when the evidence was filled in.
+ */
+export async function attachCompanyByNumber(input: EvidenceInput, evidence: Evidence, companyNumber: string): Promise<boolean> {
+  const number = companyNumber.replace(/\s+/g, '').toUpperCase()
+  if (evidence.companies_house || !/^[A-Z0-9]{6,8}$/.test(number)) return false
+  const officers = await safe('Companies House officers', () => getCompanyOfficers(number), [] as CHOfficer[])
+  if (!matchPerson(input.name, officers.map((o) => o.name)).matched) return false
+  const company = await companyDetails(input, { number, matchedBy: 'web search and director', officers })
+  if (!company) return false
+  evidence.companies_house = company.companies_house
+  evidence.decision_maker = company.decision_maker
+  evidence.age = company.age
+  evidence.missing = evidence.missing.filter((m) => !m.startsWith('Companies House'))
+  return true
+}
+
 export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
   const missing: string[] = []
 
@@ -140,42 +198,13 @@ export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
   const fcaCompanyNumber = fca?._companiesHouseNumber || null
   const match = await safe('Companies House match', () => matchCompany(input, fcaCompanyNumber), null)
 
-  let companies_house: CompaniesHouseEvidence | null = null
-  let pscs: CHPsc[] | null = null
-  if (match) {
-    const [companyProfile, financials, owners] = await Promise.all([
-      safe('Companies House profile', () => getCompanyProfile(match.number), null),
-      safe('Companies House accounts', () => getCompanyFinancials(match.number), null),
-      safe('Companies House owners', () => getCompanyPscs(match.number), [] as CHPsc[]),
-    ])
-    pscs = owners
-    if (companyProfile) {
-      companies_house = {
-        company_number: match.number,
-        company_name: companyProfile.companyName,
-        status: companyProfile.companyStatus || null,
-        incorporated: companyProfile.dateOfCreation || null,
-        accounts: financials?.accountsCategory ? formatAccountsCategory(financials.accountsCategory) : null,
-        accounts_made_up_to: financials?.lastAccountsMadeUpTo || null,
-        sic_codes: companyProfile.sicCodes || [],
-        registered_town: companyProfile.address?.locality || null,
-        matched_by: match.matchedBy,
-        url: `https://find-and-update.company-information.service.gov.uk/company/${match.number}`,
-      }
-    }
-  }
+  const company = match ? await companyDetails(input, match) : null
+  const companies_house = company?.companies_house || null
   if (!companies_house) missing.push('Companies House: no company matched by name')
-
   // The firm as the prospect writes it reads better than the register's capitals.
   const companyName = input.company || companies_house?.company_name || 'the firm'
-  const decision_maker = assessDecisionMaker(input.name, companyName, companies_house ? match!.officers : null, pscs)
-
-  // Their age, from the officer record, only when they were matched as a director.
-  let age: number | null = null
-  if (match && decision_maker.registeredName) {
-    const me = match.officers.find((o) => matchPerson(input.name, [o.name]).matched)
-    age = ageFromDob(me?.dateOfBirth)
-  }
+  const decision_maker = company?.decision_maker || assessDecisionMaker(input.name, companyName, null, null)
+  const age = company?.age ?? null
 
   const publicFca: FcaEvidence | null = fca
     ? { frn: fca.frn, name: fca.name, status: fca.status, business_type: fca.business_type, individuals: fca.individuals, website: fca.website, url: fca.url }
@@ -185,9 +214,14 @@ export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
 
 async function fcaEvidence(input: EvidenceInput): Promise<(FcaEvidence & { _companiesHouseNumber: string | null }) | null> {
   if (!input.company) return null
-  const firm = await resolveFirm(input.company)
   // The register's search is loose. Only keep a firm whose name is really this one.
-  if (!firm || !(sameCompanyName(firm.name, input.company) || similarCompanyName(firm.name, input.company))) return null
+  const isThisFirm = (name: string) => sameCompanyName(name, input.company!) || similarCompanyName(name, input.company!)
+  let firm = await resolveFirm(input.company)
+  for (const query of firm && isThisFirm(firm.name) ? [] : alternativeCompanyQueries(input.company)) {
+    firm = await resolveFirm(query)
+    if (firm && isThisFirm(firm.name)) break
+  }
+  if (!firm || !isThisFirm(firm.name)) return null
   const [profile, individuals] = await Promise.all([
     getFirmProfile(firm.referenceNumber),
     getFirmIndividualCount(firm.referenceNumber).catch(() => null),
