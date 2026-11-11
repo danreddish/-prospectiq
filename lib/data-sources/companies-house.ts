@@ -217,6 +217,39 @@ export async function getCompanyOfficers(companyNumber: string): Promise<CHOffic
     })
 }
 
+// ── People with significant control (v81) ────
+
+export interface CHPsc {
+  name: string
+  /** 'individual', 'corporate' (another company or legal entity) or 'other' */
+  kind: 'individual' | 'corporate' | 'other'
+  naturesOfControl: string[]
+  notifiedOn?: string
+}
+
+/** Current owners and controllers of a company. Ceased ones are left out. */
+export async function getCompanyPscs(companyNumber: string): Promise<CHPsc[]> {
+  const data = await chFetch(`/company/${companyNumber}/persons-with-significant-control?items_per_page=25`)
+  if (!data) return []
+  const items = data.items as Record<string, unknown>[] | undefined
+  return (items || [])
+    .filter((item) => !item.ceased_on && !item.ceased)
+    .map((item) => {
+      const k = String(item.kind || '')
+      const kind: CHPsc['kind'] = k.startsWith('individual')
+        ? 'individual'
+        : k.startsWith('corporate-entity') || k.startsWith('legal-person')
+          ? 'corporate'
+          : 'other'
+      return {
+        name: (item.name || '') as string,
+        kind,
+        naturesOfControl: (item.natures_of_control as string[] | undefined) || [],
+        notifiedOn: item.notified_on as string | undefined,
+      }
+    })
+}
+
 // ── Wealth Signal Helpers ────────────────────
 
 // Account type indicates company size (micro, small, medium, large, etc.)

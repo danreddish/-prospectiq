@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { deepResearchEnabled, triggerDeepResearch } from '@/lib/deep-research/trigger'
+import { deepResearchInProgress, researchContext, type DeepResearchState } from '@/lib/deep-research/state'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { writeOutreachSequence } from '@/lib/ai-engine'
 import { z } from 'zod'
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, headline, status, outreach, research_notes, key_trigger')
+      .select('id, campaign_id, name, role, company, location, headline, status, outreach, research_notes, key_trigger, deep_research')
       .eq('id', prospect_id)
       .eq('user_id', user.id)
       .maybeSingle(),
@@ -78,6 +80,28 @@ export async function POST(req: NextRequest) {
   }
   stepLog(startedAt, 'Signed in and prospect loaded', setupStartedAt, prospect.name)
 
+  // v81: deep research. The first time outreach is asked for, hand the person
+  // to the background job instead: it reads Companies House, the FCA Register,
+  // their LinkedIn profile and the firm's website, re-scores them and writes
+  // the outreach from what it found. If the job cannot be started, carry on
+  // and write the outreach here as before.
+  const deep = (prospect.deep_research || null) as DeepResearchState | null
+  if (deepResearchInProgress(deep)) {
+    return NextResponse.json({ ok: true, deferred: true })
+  }
+  if (!deep && deepResearchEnabled()) {
+    const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString() }
+    const { error: queueError } = await admin.from('prospects').update({ deep_research: queued }).eq('id', prospect.id).eq('user_id', user.id)
+    if (!queueError && (await triggerDeepResearch(req.nextUrl.origin, prospect.id))) {
+      stepLog(startedAt, 'Deep research started', setupStartedAt, prospect.name)
+      return NextResponse.json({ ok: true, deferred: true })
+    }
+    // Could not start it (or the column is not there yet): say so on the record and fall back.
+    if (!queueError) {
+      await admin.from('prospects').update({ deep_research: { status: 'failed', error: 'Deep research could not be started.', finished_at: new Date().toISOString() } }).eq('id', prospect.id)
+    }
+  }
+
   const profile = profileRes.data
   const accountSP = (profile?.service_profile || {}) as Record<string, string | null>
   const campaignSP = (campaign.service_profile || {}) as Record<string, string | null>
@@ -98,7 +122,7 @@ export async function POST(req: NextRequest) {
         location: prospect.location || undefined,
         headline: prospect.headline || null,
       },
-      { research_notes: prospect.research_notes, key_trigger: prospect.key_trigger },
+      researchContext(prospect.research_notes, prospect.key_trigger, deep),
       {
         niche: campaign.niche || profile?.niche || 'Wealth management',
         senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',

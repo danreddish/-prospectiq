@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { ProspectInput, Prospect, OutreachSequence, ProspectScores, ConversationTurn, ReplyCoachResponse } from '@/types'
+import type { ProspectInput, Prospect, OutreachSequence, ProspectScores, ConversationTurn, ReplyCoachResponse } from '../types'
 
 let _anthropic: Anthropic | null = null
 
@@ -75,6 +75,9 @@ function buildServiceContext(sp?: ServiceProfile): string {
 export interface ClaudeCallOptions {
   /** Abort the Claude call after this long, so it ends before the route deadline. */
   timeoutMs?: number
+  /** v81: deep research runs in the background, so it can afford a stronger model and retries. */
+  model?: string
+  maxRetries?: number
 }
 
 export type ProspectResearch = Omit<AIResearchResult, 'outreach'>
@@ -82,7 +85,7 @@ export type ProspectResearch = Omit<AIResearchResult, 'outreach'>
 function claudeRequestOptions(opts: ClaudeCallOptions) {
   // No automatic retries: a retry can't fit inside the deadline, and a silent
   // retry hides the real error from the logs.
-  return { maxRetries: 0, ...(opts.timeoutMs ? { timeout: Math.max(opts.timeoutMs, 1000) } : {}) }
+  return { maxRetries: opts.maxRetries ?? 0, ...(opts.timeoutMs ? { timeout: Math.max(opts.timeoutMs, 1000) } : {}) }
 }
 
 function logClaudeCall(label: string, startedAt: number, response: Anthropic.Message) {
@@ -117,6 +120,10 @@ function parseJsonObject<T>(text: string, label: string): T {
 
 const NO_GUESSING = `WHAT YOU KNOW: only the details given for this person. You have not read their profile, posts or website. Do not state as fact anything that is not in those details: no claims about who their clients are, how big or established the firm is, how it wins business, or what problems it has.
 NEVER guess at or mention: their age or career stage, retirement, succession, selling or valuing the firm, their health, or their personal finances.`
+
+// v81: after deep research the app does have findings, each with a source.
+const VERIFIED_ONLY = `WHAT YOU KNOW: the verified findings given for this person, each from Companies House, the FCA Register, their LinkedIn profile or the firm's own website. You may refer to them accurately. Do not add to them, stretch them or infer problems from them.
+NEVER guess at or mention: their age or career stage, retirement, succession, selling or valuing the firm, their health, or their personal finances. Never mention Companies House, the FCA Register, their accounts, or that they were researched.`
 
 /** The line for the person's own headline, or nothing when there isn't one. */
 function headlineLine(input: ProspectInput): string {
@@ -237,6 +244,9 @@ Return this exact JSON structure (fill in ALL values uniquely for this specific 
 export interface OutreachResearchContext {
   research_notes?: string | null
   key_trigger?: string | null
+  /** v81: true once deep research has run, so the notes are findings, not guesses. */
+  verified?: boolean
+  findings?: { fact: string; source: string }[] | null
 }
 
 /**
@@ -246,6 +256,15 @@ export interface OutreachResearchContext {
  */
 function backgroundLines(research: OutreachResearchContext | null): string[] {
   const lines: string[] = []
+  if (research?.verified) {
+    if (research.research_notes) lines.push(`Research summary (verified): ${research.research_notes}`)
+    const findings = (research.findings || []).filter((f) => f?.fact).slice(0, 8)
+    if (findings.length) lines.push(`Verified findings you may refer to:\n${findings.map((f) => `- ${f.fact} (${f.source})`).join('\n')}`)
+    if (research.key_trigger && !/^no specific trigger/i.test(research.key_trigger.trim())) {
+      lines.push(`Suggested angle, raise it as a question, not a statement: ${research.key_trigger}`)
+    }
+    return lines
+  }
   if (research?.research_notes) lines.push(`Background, unverified, never state it to them as fact: ${research.research_notes}`)
   if (research?.key_trigger && !/^no specific trigger/i.test(research.key_trigger.trim())) {
     lines.push(`Possible angle, an assumption, never tell them this is their situation: ${research.key_trigger}`)
@@ -254,8 +273,8 @@ function backgroundLines(research: OutreachResearchContext | null): string[] {
 }
 
 // v81: rules shared by every message the app writes.
-const MESSAGE_RULES = `RULES FOR EVERY MESSAGE:
-- ${NO_GUESSING.replace(/\n/g, '\n- ')}
+const messageRules = (verified: boolean) => `RULES FOR EVERY MESSAGE:
+- ${(verified ? VERIFIED_ONLY : NO_GUESSING).replace(/\n/g, '\n- ')}
 - Ask, never tell. Do not tell them what their problem is ("trapped in", "struggling with", "dependent on"). If you raise a topic, raise it as a question.
 - At most ONE question per message.
 - NEVER invent or imply past clients, case studies, examples or results: no "a couple of others I've worked with", no "advisers in similar positions found". Only mention a result if the sender's details above give it.
@@ -289,17 +308,17 @@ export async function writeOutreachSequence(
   let response: Anthropic.Message
   try {
     response = await getAnthropic().messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: opts.model || 'claude-haiku-4-5-20251001',
       max_tokens: 900,
       system: `Write LinkedIn outreach for a financial services professional. Return JSON only.
 Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}
 
 OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence that EARNS a conversation. It does not chase a call. These are senior, wealthy, heavily-pitched people: a stranger asking for 15 minutes reads as a sales script and gets ignored. The sequence must feel like a credible peer reaching out, not a funnel.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''}
-Step1 (Connection Request, hard limit 280 chars, aim for under 200): NO pitch, NO ask, NO mention of a call or meeting. One plain, specific reason for connecting, taken from their role, company or headline. No compliments: never "impressed by", "love what you're doing" or similar. The only goal is that they accept.
+Step1 (Connection Request, hard limit 280 chars, aim for under 200): NO pitch, NO ask, NO mention of a call or meeting. One plain, specific reason for connecting, taken from their role, company, headline or a verified finding. No compliments: never "impressed by", "love what you're doing" or similar. The only goal is that they accept.
 Step2 (Welcome Message, hard limit 600 chars, aim for under 450): thank them for connecting. Stay curious and human. Ask ONE open question about their firm or role that they could answer in a line. Do not assume the answer or tell them what their problem is. NO pitch and NO call ask here either.
 Step3 (Value + Soft Door, hard limit 800 chars, aim for under 650): lead with one useful observation relevant to their kind of firm. You may say in ONE line what the sender works on, kept directional. Do not list the steps or parts of the sender's method. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share more, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
 
-${MESSAGE_RULES}
+${messageRules(!!research?.verified)}
 British English. No financial advice. No guarantees. Peer tone.`,
       messages: [{
         role: 'user',
@@ -379,12 +398,12 @@ function heyReachBrief(instructions: string): string {
 msg_4 MUST also follow the sender's instructions for this campaign: "${instructions}". If they say what to offer or include in the final message, include it as one light, optional offer they can take up by replying, named the way the sender names it.`
 }
 
-const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
+const heyReachRules = (verified: boolean) => `RULES FOR EVERY MESSAGE:
 - The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.
 - Each message must make sense on its own if they never replied to the one before. Do not say "following up" or "just checking in".
 - Equal footing in tone, warm and specific to THIS person. No salesy language, no flattery, no compliments, no "I hope this finds you well".
 - NEVER invent or imply figures, case studies, past clients, examples or statistics: no "a couple of others I've worked with", no "advisers in similar positions found". Directional language only.
-- ${NO_GUESSING.replace(/\n/g, '\n- ')}
+- ${(verified ? VERIFIED_ONLY : NO_GUESSING).replace(/\n/g, '\n- ')}
 - Ask, never tell. Do not tell them what their problem is. If you raise a topic, raise it as a question.
 - At most ONE question per message.
 - Never list the steps or parts of the sender's method.
@@ -454,7 +473,7 @@ Sender: ${context.senderName} | Who the sender is targeting: ${context.niche}${s
 THE FULL SEQUENCE (LINK Method order). You are writing ${keys.join(' and ')} only.
 ${heyReachBrief(instructions)}
 
-${HEYREACH_RULES}`,
+${heyReachRules(!!research?.verified)}`,
       messages: [{
         role: 'user',
         content: `Write ${keys.join(' and ')} for this prospect.

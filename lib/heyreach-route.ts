@@ -2,6 +2,7 @@
 // v79 the sending routes also serve users with a HeyReach campaign assigned.
 
 import { createHash } from 'crypto'
+import type { DeepResearchState } from '@/lib/deep-research/state'
 import { NextResponse } from 'next/server'
 import type { User } from '@supabase/supabase-js'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
@@ -88,6 +89,8 @@ export interface TestProspect {
   key_trigger: string | null
   total_score: number | null
   heyreach: HeyReachState | null
+  /** v81: deep research state and findings */
+  deep_research: DeepResearchState | null
 }
 
 export interface TestCampaign {
@@ -112,7 +115,7 @@ export async function loadTestProspect(
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, headline, linkedin_url, status, research_notes, key_trigger, total_score, heyreach')
+      .select('id, campaign_id, name, role, company, location, headline, linkedin_url, status, research_notes, key_trigger, total_score, heyreach, deep_research')
       .eq('id', prospectId)
       .eq('user_id', userId)
       .maybeSingle(),
