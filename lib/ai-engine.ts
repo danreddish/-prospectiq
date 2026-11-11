@@ -110,6 +110,31 @@ function parseJsonObject<T>(text: string, label: string): T {
 }
 
 /** Step 1 of research: notes, estimates and the four scores. No outreach. */
+// v81: what the app actually knows about a person. It has their name, role,
+// company, location, sometimes their LinkedIn headline and Companies House
+// filings. It has not read their profile, posts or website. These blocks stop
+// guesses being written up as findings and then repeated in messages.
+
+const NO_GUESSING = `WHAT YOU KNOW: only the details given for this person. You have not read their profile, posts or website. Do not state as fact anything that is not in those details: no claims about who their clients are, how big or established the firm is, how it wins business, or what problems it has.
+NEVER guess at or mention: their age or career stage, retirement, succession, selling or valuing the firm, their health, or their personal finances.`
+
+/** The line for the person's own headline, or nothing when there isn't one. */
+function headlineLine(input: ProspectInput): string {
+  const h = (input.headline || '').trim()
+  return h ? `\nTheir LinkedIn headline (their own words): ${h.slice(0, 300)}` : ''
+}
+
+/**
+ * Cuts a message back to whole sentences that fit the limit. A backstop for
+ * when the model overruns: better a shorter message than one over the limit.
+ */
+export function fitToLimit(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const cut = text.slice(0, limit)
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '), cut.lastIndexOf('.\n'), cut.lastIndexOf('?\n'))
+  return end > limit * 0.5 ? cut.slice(0, end + 1).trim() : cut.slice(0, limit - 3).trim() + '...'
+}
+
 export async function researchProspectScores(
   input: ProspectInput,
   context: ResearchContext,
@@ -153,6 +178,11 @@ SCORING (1-10 each):
 - accessibility: How easy to reach. Owner-managers and partners = high. C-suite at large corporates = lower.
 - complexity: Multiple companies, cross-border, property portfolios = high. Single simple role = low.
 TIERS: A=30+, B=22-29, C=below 22.${serviceCtx ? '\nScore HIGHER if prospect matches the IDEAL CLIENT description. Score timing HIGHER if prospect likely needs the stated OUTCOMES.' : ''}
+USE THE WHOLE RANGE. A list where everyone scores within a few points of each other is useless to the sender. Give 8-10 only where the details given clearly support it, and 4-6 where you are assuming.
+HARD REQUIREMENTS: if the IDEAL CLIENT, MIN THRESHOLD or the user's instructions set a requirement (for example the person must be the sole owner or the decision-maker) and this person's role or headline fails it or leaves it in doubt (for example chairman, part-owner, co-owner, partner, or a firm that looks larger than asked for), score accessibility 1-4 and say why in research_notes.${serviceCtx ? '\nIf the sender is offering a business service to firm owners or professionals, not personal wealth advice, then score wealth on how well the firm fits the MIN THRESHOLD and complexity on how much the firm stands to gain. Do not let assumed personal wealth raise either score.' : ''}
+
+${NO_GUESSING}
+The wealth_estimate, est_age and yrs_at_sr_level fields below are still required: they are your rough estimates for the sender's eyes only. Keep them out of research_notes and key_trigger.
 
 WEALTH ESTIMATE: You MUST estimate uniquely for each prospect based on their specific role, company, and location. Do NOT default to the same range for everyone.${context.serviceProfile?.minimum_threshold ? ` The sender targets clients with ${context.serviceProfile.minimum_threshold} minimum — calibrate relative to that threshold.` : ''}${context.financials?.wealthCeiling !== null && context.financials?.wealthCeiling !== undefined ? ` Verified accounts data caps this prospect at ${context.financials.formattedCategory.toLowerCase()} — adjust the wealth estimate accordingly. A micro-entity director rarely has £5M+ personal wealth from this company alone.` : ''} Ranges: £500K-1M, £1-3M, £3-5M, £5-10M, £10-25M, £25-50M, £50-100M, £100M+. A CIO at a family office is very different from a director at a small consultancy.
 
@@ -168,15 +198,15 @@ British English. No financial advice. No guarantees. Peer tone.`,
 Name: ${input.name}
 Role: ${input.role || 'Director'}
 Company: ${input.company || 'Unknown'}
-Location: ${input.location || 'Unknown'}
+Location: ${input.location || 'Unknown'}${headlineLine(input)}
 
 Return this exact JSON structure (fill in ALL values uniquely for this specific person):
 {
-  "research_notes": "2-3 sentences about THIS person specifically",
+  "research_notes": "2-3 sentences on what the details given show about THIS person and how well they fit, using their headline if there is one. Facts first. Mark anything assumed with 'likely'. Say plainly if a hard requirement is in doubt",
   "wealth_estimate": "use the appropriate range for THIS person",
   "est_age": "estimate based on THIS person's likely career stage",
   "yrs_at_sr_level": 0,
-  "key_trigger": "one sentence about why they might need services NOW",
+  "key_trigger": "one sentence on why the sender's service could be relevant to them, tied to something in the details given. If nothing specific supports one, write exactly: No specific trigger in the details available.",
   "scores": {"wealth": 0, "timing": 0, "accessibility": 0, "complexity": 0}
 }`
       }],
@@ -209,6 +239,31 @@ export interface OutreachResearchContext {
   key_trigger?: string | null
 }
 
+/**
+ * Research notes and the trigger are the app's own read of a name and a job
+ * title, not findings. Handed to the message writer as that, so they shape
+ * the angle without being quoted back to the person as fact.
+ */
+function backgroundLines(research: OutreachResearchContext | null): string[] {
+  const lines: string[] = []
+  if (research?.research_notes) lines.push(`Background, unverified, never state it to them as fact: ${research.research_notes}`)
+  if (research?.key_trigger && !/^no specific trigger/i.test(research.key_trigger.trim())) {
+    lines.push(`Possible angle, an assumption, never tell them this is their situation: ${research.key_trigger}`)
+  }
+  return lines
+}
+
+// v81: rules shared by every message the app writes.
+const MESSAGE_RULES = `RULES FOR EVERY MESSAGE:
+- ${NO_GUESSING.replace(/\n/g, '\n- ')}
+- Ask, never tell. Do not tell them what their problem is ("trapped in", "struggling with", "dependent on"). If you raise a topic, raise it as a question.
+- At most ONE question per message.
+- NEVER invent or imply past clients, case studies, examples or results: no "a couple of others I've worked with", no "advisers in similar positions found". Only mention a result if the sender's details above give it.
+- No compliments and no flattery.
+- Never use dashes between words or clauses: no em dashes, no en dashes, no " - ". Use commas or full stops instead.
+- No words in capitals for emphasis.
+- The length limits are hard limits. Shorter is better.`
+
 const OUTREACH_STEPS = [
   { key: 'step1', title: 'Connection Request', timing: 'Day 0', charLimit: 280 },
   { key: 'step2', title: 'Welcome Message', timing: '24hrs later', charLimit: 600 },
@@ -228,9 +283,7 @@ export async function writeOutreachSequence(
     customBlock = `\n\nUSER INSTRUCTIONS FOR THIS CAMPAIGN (apply to scoring and outreach personalisation): "${context.customInstructions.trim()}"`
   }
 
-  const known: string[] = []
-  if (research?.research_notes) known.push(`What we know: ${research.research_notes}`)
-  if (research?.key_trigger) known.push(`Why now: ${research.key_trigger}`)
+  const known = backgroundLines(research)
 
   const startedAt = Date.now()
   let response: Anthropic.Message
@@ -242,9 +295,11 @@ export async function writeOutreachSequence(
 Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}
 
 OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence that EARNS a conversation. It does not chase a call. These are senior, wealthy, heavily-pitched people: a stranger asking for 15 minutes reads as a sales script and gets ignored. The sequence must feel like a credible peer reaching out, not a funnel.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''}
-Step1 (Connection Request, max 280 chars): NO pitch, NO ask, NO mention of a call or meeting. One genuine, specific reason for connecting tied to something real about them or their company. The only goal is that they accept.
-Step2 (Welcome Message, max 600 chars): thank them for connecting. Stay curious and human. Ask ONE thoughtful question relevant to their situation. NO pitch and NO call ask here either.
-Step3 (Value + Soft Door, max 800 chars): lead with something genuinely useful. You may include ONE short illustrative example of how someone in a similar position handled this, but keep it DIRECTIONAL, never fake-precise: say things like "saved a meaningful amount in tax and a lot of admin", NEVER invented exact figures like "£47k" or "saved £24k a year". Precise numbers from a near-stranger read as a script and destroy trust. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share how a couple of others approached it, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
+Step1 (Connection Request, hard limit 280 chars, aim for under 200): NO pitch, NO ask, NO mention of a call or meeting. One plain, specific reason for connecting, taken from their role, company or headline. No compliments: never "impressed by", "love what you're doing" or similar. The only goal is that they accept.
+Step2 (Welcome Message, hard limit 600 chars, aim for under 450): thank them for connecting. Stay curious and human. Ask ONE open question about their firm or role that they could answer in a line. Do not assume the answer or tell them what their problem is. NO pitch and NO call ask here either.
+Step3 (Value + Soft Door, hard limit 800 chars, aim for under 650): lead with one useful observation relevant to their kind of firm. You may say in ONE line what the sender works on, kept directional. Do not list the steps or parts of the sender's method. End with a soft, optional door-opener the prospect can take or ignore with zero friction (e.g. "if it is ever useful, happy to share more, no pressure"). Do NOT propose a call, a 15-minute slot, or specific days. The call happens later, in the live reply, once they have engaged, not in this pre-written sequence.
+
+${MESSAGE_RULES}
 British English. No financial advice. No guarantees. Peer tone.`,
       messages: [{
         role: 'user',
@@ -253,7 +308,7 @@ British English. No financial advice. No guarantees. Peer tone.`,
 Name: ${input.name}
 Role: ${input.role || 'Director'}
 Company: ${input.company || 'Unknown'}
-Location: ${input.location || 'Unknown'}${known.length ? `\n${known.join('\n')}` : ''}
+Location: ${input.location || 'Unknown'}${headlineLine(input)}${known.length ? `\n${known.join('\n')}` : ''}
 
 Return this exact JSON structure:
 {
@@ -276,14 +331,11 @@ Return this exact JSON structure:
 
   const sequence: OutreachSequence = {}
   for (const step of OUTREACH_STEPS) {
-    const message = (raw[step.key]?.message || '').trim()
+    const message = removeDashes((raw[step.key]?.message || '').trim())
     if (!message) throw new Error(`AI outreach response is missing ${step.key}`)
-    let finalMessage = message
-    // Same rule as before v76.2: only the connection request is hard-trimmed,
-    // because LinkedIn rejects a note over 280 characters.
-    if (step.key === 'step1' && finalMessage.length > 280) {
-      finalMessage = finalMessage.slice(0, 277) + '...'
-    }
+    // v81: every step is held to its limit, cut back to whole sentences.
+    // LinkedIn rejects a connection note over 280 characters.
+    const finalMessage = fitToLimit(message, step.charLimit)
     sequence[step.key] = {
       title: step.title,
       timing: step.timing,
@@ -330,8 +382,12 @@ msg_4 MUST also follow the sender's instructions for this campaign: "${instructi
 const HEYREACH_RULES = `RULES FOR EVERY MESSAGE:
 - The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.
 - Each message must make sense on its own if they never replied to the one before. Do not say "following up" or "just checking in".
-- Equal footing in tone, warm and specific to THIS person. No salesy language, no flattery, no "I hope this finds you well".
-- NEVER invent figures, case studies, client names or statistics. Directional language only.
+- Equal footing in tone, warm and specific to THIS person. No salesy language, no flattery, no compliments, no "I hope this finds you well".
+- NEVER invent or imply figures, case studies, past clients, examples or statistics: no "a couple of others I've worked with", no "advisers in similar positions found". Directional language only.
+- ${NO_GUESSING.replace(/\n/g, '\n- ')}
+- Ask, never tell. Do not tell them what their problem is. If you raise a topic, raise it as a question.
+- At most ONE question per message.
+- Never list the steps or parts of the sender's method.
 - No financial advice. No guarantees. British English.
 - Never use dashes between words or clauses: no em dashes, no en dashes, no " - ". Use commas or full stops instead.
 - No words in capitals for emphasis.
@@ -376,8 +432,7 @@ export async function writeHeyReachMessages(
 
   const known: string[] = []
   if (input.first_name) known.push(`First name: ${input.first_name}`)
-  if (research?.research_notes) known.push(`What we know: ${research.research_notes}`)
-  if (research?.key_trigger) known.push(`Why now: ${research.key_trigger}`)
+  known.push(...backgroundLines(research))
 
   const earlierBlock =
     part === 2 && earlier?.msg_1 && earlier?.msg_2
@@ -407,7 +462,7 @@ ${HEYREACH_RULES}`,
 Name: ${input.name}
 Role: ${input.role || 'Director'}
 Company: ${input.company || 'Unknown'}
-Location: ${input.location || 'Unknown'}${known.length ? `\n${known.join('\n')}` : ''}${earlierBlock}${reminder}
+Location: ${input.location || 'Unknown'}${headlineLine(input)}${known.length ? `\n${known.join('\n')}` : ''}${earlierBlock}${reminder}
 
 Return this exact JSON structure:
 {${keys.map((k) => `"${k}": "..."`).join(', ')}}`

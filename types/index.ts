@@ -227,6 +227,8 @@ export interface ProspectInput {
   company?: string
   location?: string
   linkedin_url?: string
+  /** Their own LinkedIn headline, when the source gave one. */
+  headline?: string | null
 }
 
 // Reply Coach types

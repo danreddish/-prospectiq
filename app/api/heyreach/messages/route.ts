@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
         role: prospect.role || undefined,
         company: prospect.company || undefined,
         location: prospect.location || undefined,
+        headline: prospect.headline || null,
       },
       { research_notes: prospect.research_notes, key_trigger: prospect.key_trigger },
       {

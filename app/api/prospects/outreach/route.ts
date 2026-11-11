@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, status, outreach, research_notes, key_trigger')
+      .select('id, campaign_id, name, role, company, location, headline, status, outreach, research_notes, key_trigger')
       .eq('id', prospect_id)
       .eq('user_id', user.id)
       .maybeSingle(),
@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
         role: prospect.role || undefined,
         company: prospect.company || undefined,
         location: prospect.location || undefined,
+        headline: prospect.headline || null,
       },
       { research_notes: prospect.research_notes, key_trigger: prospect.key_trigger },
       {

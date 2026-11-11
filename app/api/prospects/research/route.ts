@@ -226,7 +226,8 @@ export async function POST(req: NextRequest) {
 
       // The Claude call logs its own duration and token counts.
       const research = await researchProspectScores(
-        input,
+        // v81: their own LinkedIn headline is the one thing we have in their words.
+        { ...input, headline: existingPending?.headline || null },
         {
           niche: campaign.niche || profile?.niche || 'Wealth management',
           senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',

@@ -81,6 +81,7 @@ export interface TestProspect {
   role: string | null
   company: string | null
   location: string | null
+  headline: string | null
   linkedin_url: string | null
   status: string
   research_notes: string | null
@@ -111,7 +112,7 @@ export async function loadTestProspect(
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, linkedin_url, status, research_notes, key_trigger, total_score, heyreach')
+      .select('id, campaign_id, name, role, company, location, headline, linkedin_url, status, research_notes, key_trigger, total_score, heyreach')
       .eq('id', prospectId)
       .eq('user_id', userId)
       .maybeSingle(),
