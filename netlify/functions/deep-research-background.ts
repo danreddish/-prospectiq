@@ -4,12 +4,12 @@
 // Started by /api/prospects/research and /api/prospects/deep-research.
 // Static, relative imports only.
 
-import { runDeepResearch } from '../../lib/deep-research/run'
+import { rewriteMessages, runDeepResearch } from '../../lib/deep-research/run'
 import { verifyProspectSignature } from '../../lib/deep-research/trigger'
 
 export default async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
-  let body: { prospect_id?: unknown; signature?: unknown }
+  let body: { prospect_id?: unknown; signature?: unknown; mode?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -21,6 +21,7 @@ export default async (req: Request): Promise<Response> => {
     console.warn('[deep-research] rejected a request with a bad signature')
     return new Response('Forbidden', { status: 403 })
   }
-  const result = await runDeepResearch(prospectId)
+  // mode 'messages': write the outreach again from the saved findings, no new research.
+  const result = body.mode === 'messages' ? await rewriteMessages(prospectId) : await runDeepResearch(prospectId)
   return new Response(JSON.stringify(result), { status: result.ok ? 200 : 500, headers: { 'Content-Type': 'application/json' } })
 }

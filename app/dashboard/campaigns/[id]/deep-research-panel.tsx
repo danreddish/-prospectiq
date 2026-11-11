@@ -88,6 +88,14 @@ export default function DeepResearchPanel({
   const box = 'mt-6 bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal'
   const heading = 'text-brand-rose-gold text-xs uppercase tracking-wider font-bold'
 
+  if (inProgress && state?.evidence) {
+    return (
+      <div className={box}>
+        <h4 className={`${heading} mb-2`}>Deep research</h4>
+        <p className="text-brand-cream text-sm">Rewriting the messages from the saved findings. About 20 seconds.</p>
+      </div>
+    )
+  }
   if (inProgress) {
     return (
       <div className={box}>

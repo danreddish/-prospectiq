@@ -32,12 +32,12 @@ export function verifyProspectSignature(prospectId: string, signature: string): 
  * Ask Netlify to run the job. A background function answers 202 straight
  * away and carries on by itself. Returns false if the request did not land.
  */
-export async function triggerDeepResearch(origin: string, prospectId: string): Promise<boolean> {
+export async function triggerDeepResearch(origin: string, prospectId: string, mode: 'research' | 'messages' = 'research'): Promise<boolean> {
   try {
     const res = await fetch(`${origin}${DEEP_RESEARCH_FUNCTION_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prospect_id: prospectId, signature: signProspect(prospectId) }),
+      body: JSON.stringify({ prospect_id: prospectId, signature: signProspect(prospectId), mode }),
       signal: AbortSignal.timeout(2500),
     })
     if (res.status !== 202 && !res.ok) {

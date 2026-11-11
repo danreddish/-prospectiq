@@ -161,7 +161,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     return () => clearInterval(timer)
   }, [deepRunning, campaign.id, router])
 
-  async function startDeepResearch(ids: string[]) {
+  async function startDeepResearch(ids: string[], mode: 'research' | 'messages' = 'research') {
     if (ids.length === 0 || deepStarting) return
     setDeepStarting(true)
     let started = 0
@@ -173,7 +173,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
         const res = await fetch('/api/prospects/deep-research', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaign_id: campaign.id, prospect_ids: ids.slice(i, i + 5) }),
+          body: JSON.stringify({ campaign_id: campaign.id, prospect_ids: ids.slice(i, i + 5), mode }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
@@ -186,7 +186,11 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
         if (refused?.reason) lastReason = refused.reason
       }
       if (started > 0) {
-        toast.success(`Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`)
+        toast.success(
+          mode === 'messages'
+            ? 'Rewriting the messages from the saved findings. About 20 seconds.'
+            : `Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`
+        )
         setDeepPicked(new Set())
         setDeepBatch(startedIds)
         setDeepLive({})
@@ -1255,6 +1259,20 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                       onCopy={() => copyMessage(step!.message, i + 1)}
                     />
                   ))}
+
+                {!isAdviser && deepState(selected)?.status === 'done' && !deepResearchInProgress(deepState(selected)) && (
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <p className="text-brand-beige text-xs">Written from the deep research findings.</p>
+                    <button
+                      onClick={() => startDeepResearch([selected.id], 'messages')}
+                      disabled={deepStarting}
+                      title="Writes the three messages again from the saved findings. The research is not repeated."
+                      className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors disabled:opacity-60 flex-shrink-0"
+                    >
+                      {deepStarting ? 'Starting...' : 'Rewrite messages'}
+                    </button>
+                  </div>
+                )}
 
                 {!isAdviser && deepResearchInProgress(deepState(selected)) && (
                   <div className="rounded-xl border border-brand-rose-gold/30 p-5 text-center mb-4">

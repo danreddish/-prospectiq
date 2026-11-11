@@ -173,3 +173,72 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     return { ok: false, error: message }
   }
 }
+
+/**
+ * Writes the outreach again from findings already saved, without repeating
+ * the research. For when the message rules change, or a set reads badly.
+ * The person shows as running, on the "Writing the messages" step, and goes
+ * back to done whether or not the rewrite works.
+ */
+export async function rewriteMessages(prospectId: string): Promise<{ ok: boolean; error?: string }> {
+  const admin = adminClient()
+  const { data: prospect, error: loadError } = await admin
+    .from('prospects')
+    .select('id, user_id, campaign_id, name, role, company, location, headline, research_notes, key_trigger, deep_research')
+    .eq('id', prospectId)
+    .maybeSingle()
+  if (loadError || !prospect) return { ok: false, error: loadError?.message || 'Prospect not found' }
+  const state = (prospect.deep_research || null) as DeepResearchState | null
+  if (!state || !state.evidence) return { ok: false, error: 'Deep research has not finished for this person' }
+
+  // Whatever happens, the research itself is put back as done.
+  const done = (extra: Partial<DeepResearchState>): DeepResearchState => {
+    const next: DeepResearchState = { ...state, status: 'done', ...extra }
+    delete next.stage
+    return next
+  }
+  try {
+    const [{ data: campaign }, { data: profile }] = await Promise.all([
+      admin.from('campaigns').select('niche, sender_name, service_profile, custom_instructions').eq('id', prospect.campaign_id).maybeSingle(),
+      admin.from('profiles').select('niche, sender_name, service_profile').eq('id', prospect.user_id).maybeSingle(),
+    ])
+    const campaignSp = (campaign?.service_profile || {}) as Sp
+    const accountSp = (profile?.service_profile || {}) as Sp
+    const outreach = await writeOutreachSequence(
+      {
+        name: prospect.name,
+        role: prospect.role || undefined,
+        company: prospect.company || undefined,
+        location: prospect.location || undefined,
+        headline: state.evidence.profile?.headline || prospect.headline || null,
+      },
+      { research_notes: prospect.research_notes, key_trigger: prospect.key_trigger, verified: true, findings: state.findings || [] },
+      {
+        niche: campaign?.niche || profile?.niche || 'Wealth management',
+        senderName: campaign?.sender_name || profile?.sender_name || 'Financial Advisor',
+        serviceProfile: {
+          what_you_do: campaignSp.what_you_do || accountSp.what_you_do || null,
+          who_you_help: campaignSp.who_you_help || accountSp.who_you_help || null,
+          key_outcomes: campaignSp.key_outcomes || accountSp.key_outcomes || null,
+          minimum_threshold: campaignSp.minimum_threshold || accountSp.minimum_threshold || null,
+          geographic_focus: campaignSp.geographic_focus || accountSp.geographic_focus || null,
+        },
+        customInstructions: (campaign?.custom_instructions as string | null) || null,
+        voiceSample: voiceSampleFrom(profile?.service_profile),
+      },
+      { model: state.model || process.env.DEEP_RESEARCH_MODEL || 'claude-sonnet-5-5', timeoutMs: 60000, maxRetries: 2 }
+    )
+    const next = done({ outreach_written: true })
+    delete next.outreach_error
+    const { error: saveError } = await admin.from('prospects').update({ deep_research: next, outreach }).eq('id', prospectId)
+    if (saveError) throw new Error(saveError.message)
+    console.log(`[DeepResearch] Messages rewritten for ${prospect.name}`)
+    return { ok: true }
+  } catch (err) {
+    const message = plainError(err instanceof Error ? err.message : 'Could not write the messages')
+    console.error(`[DeepResearch] Rewrite FAILED ${prospect.name}:`, message)
+    // The old messages stay as they were.
+    await admin.from('prospects').update({ deep_research: done({ outreach_error: message }) }).eq('id', prospectId)
+    return { ok: false, error: message }
+  }
+}

@@ -297,10 +297,15 @@ function backgroundLines(research: OutreachResearchContext | null): string[] {
   return lines
 }
 
+// v81: the whole sequence is written before the first message is sent.
+const NO_REPLY_YET = `They have not replied to anything. Every message is written in advance, before any reply exists, and is sent whether or not they answered the one before. Never thank them for sharing, answering or replying. Never refer to something they said or to a conversation. Thanking them for connecting, once, in the first message after they accept, is fine. Each message must make sense on its own.
+- Never say how you came across them (no "in my feed", "a mutual connection", "came recommended") and never claim anything about yourself that the sender's details do not give.`
+
 // v81: rules shared by every message the app writes.
 const messageRules = (verified: boolean) => `RULES FOR EVERY MESSAGE:
 - ${(verified ? VERIFIED_ONLY : NO_GUESSING).replace(/\n/g, '\n- ')}
-- Ask, never tell. Do not tell them what their problem is ("trapped in", "struggling with", "dependent on"). If you raise a topic, raise it as a question.
+- ${NO_REPLY_YET}
+- Ask, never tell. Do not tell them what their problem is ("trapped in", "struggling with", "dependent on") or what matters to them ("clearly matters to you"). If you raise a topic, raise it as a question.
 - At most ONE question per message.
 - NEVER invent or imply past clients, case studies, examples or results: no "a couple of others I've worked with", no "advisers in similar positions found". Only mention a result if the sender's details above give it.
 - No compliments and no flattery.
@@ -429,7 +434,8 @@ msg_4 MUST also follow the sender's instructions for this campaign: "${instructi
 
 const heyReachRules = (verified: boolean) => `RULES FOR EVERY MESSAGE:
 - The connection request was sent BLANK. They accepted. Nothing has been said yet, so msg_1 is the first thing they read.
-- Each message must make sense on its own if they never replied to the one before. Do not say "following up" or "just checking in".
+- ${NO_REPLY_YET}
+- Do not say "following up" or "just checking in".
 - Equal footing in tone, warm and specific to THIS person. No salesy language, no flattery, no compliments, no "I hope this finds you well".
 - NEVER invent or imply figures, case studies, past clients, examples or statistics: no "a couple of others I've worked with", no "advisers in similar positions found". Directional language only.
 - ${(verified ? VERIFIED_ONLY : NO_GUESSING).replace(/\n/g, '\n- ')}

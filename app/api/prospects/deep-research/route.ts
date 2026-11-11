@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { deepResearchEnabled, triggerDeepResearch } from '@/lib/deep-research/trigger'
-import { deepResearchCanStart, deepResearchInProgress, type DeepResearchState } from '@/lib/deep-research/state'
+import { DEEP_RESEARCH_STAGES, deepResearchCanStart, deepResearchInProgress, type DeepResearchState } from '@/lib/deep-research/state'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,6 +20,8 @@ const StartSchema = z.object({
   campaign_id: z.string().uuid(),
   // Five at a time keeps the request well inside Netlify's 10 seconds.
   prospect_ids: z.array(z.string().uuid()).min(1).max(5),
+  // 'messages': write the outreach again from the saved findings, no new research.
+  mode: z.enum(['research', 'messages']).optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -32,6 +34,7 @@ export async function POST(req: NextRequest) {
   const parsed = StartSchema.safeParse(await req.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400, ...NO_STORE })
   const { campaign_id, prospect_ids } = parsed.data
+  const mode = parsed.data.mode || 'research'
 
   const { data: rows, error } = await supabase
     .from('prospects')
@@ -47,6 +50,18 @@ export async function POST(req: NextRequest) {
     (rows || []).map(async (row) => {
       const state = (row.deep_research || null) as DeepResearchState | null
       if (row.status !== 'completed') return { id: row.id, started: false, reason: 'Research this prospect first.' }
+      if (mode === 'messages') {
+        if (state?.status !== 'done' || !state.evidence) return { id: row.id, started: false, reason: 'Run deep research first.' }
+        // Shows as running on the last step; the findings and evidence are kept.
+        const rewriting: DeepResearchState = { ...state, status: 'running', started_at: new Date().toISOString(), stage: DEEP_RESEARCH_STAGES[2] }
+        const { error: markError } = await admin.from('prospects').update({ deep_research: rewriting }).eq('id', row.id).eq('user_id', user.id)
+        if (markError) return { id: row.id, started: false, reason: 'Could not start it.' }
+        if (!(await triggerDeepResearch(origin, row.id, 'messages'))) {
+          await admin.from('prospects').update({ deep_research: state }).eq('id', row.id)
+          return { id: row.id, started: false, reason: 'Could not start it. Try again.' }
+        }
+        return { id: row.id, started: true }
+      }
       if (!deepResearchCanStart(state)) {
         return { id: row.id, started: false, reason: state?.status === 'done' ? 'Already done.' : 'Already running.' }
       }
