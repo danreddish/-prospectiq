@@ -77,16 +77,16 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('prospects')
-    .select('id, status:deep_research->>status, queued_at:deep_research->>queued_at, started_at:deep_research->>started_at')
+    .select('id, status:deep_research->>status, queued_at:deep_research->>queued_at, started_at:deep_research->>started_at, stage:deep_research->>stage')
     .eq('campaign_id', campaignId)
     .eq('user_id', user.id)
     .not('deep_research', 'is', null)
   if (error) return NextResponse.json({ error: 'Could not load' }, { status: 500, ...NO_STORE })
 
   const states = (data || []).map((r) => {
-    const row = r as unknown as { id: string; status: string; queued_at: string | null; started_at: string | null }
+    const row = r as unknown as { id: string; status: string; queued_at: string | null; started_at: string | null; stage: string | null }
     const inProgress = deepResearchInProgress({ status: row.status as DeepResearchState['status'], queued_at: row.queued_at || undefined, started_at: row.started_at || undefined })
-    return { id: row.id, status: row.status, in_progress: inProgress }
+    return { id: row.id, status: row.status, in_progress: inProgress, stage: inProgress ? row.stage || 'Waiting to start' : null }
   })
   return NextResponse.json({ ok: true, states, in_progress: states.filter((s) => s.in_progress).length }, NO_STORE)
 }

@@ -131,7 +131,8 @@ async function callClaude(model: string, system: string, user: string, webSearch
   for (let turn = 0; turn < 4; turn++) {
     const response = (await anthropic.messages.create(
       // The installed SDK predates the web search tool's types.
-      { model, max_tokens: 2000, temperature: 0.2, system, messages, ...(tools ? { tools } : {}) } as unknown as Anthropic.MessageCreateParamsNonStreaming,
+      // No temperature: the newer models reject it.
+      { model, max_tokens: 2000, system, messages, ...(tools ? { tools } : {}) } as unknown as Anthropic.MessageCreateParamsNonStreaming,
       { maxRetries: 3, timeout: 150000 }
     )) as Anthropic.Message
     usageIn += response.usage.input_tokens

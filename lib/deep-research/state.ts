@@ -14,6 +14,8 @@ export interface DeepResearchState {
   started_at?: string
   finished_at?: string
   error?: string
+  /** What the job is doing right now, in plain words, while it runs. */
+  stage?: string
   evidence?: Evidence
   findings?: Finding[]
   who_they_serve?: string | null
@@ -25,6 +27,13 @@ export interface DeepResearchState {
   /** The quick first-pass score, kept so the change is visible. */
   first_pass?: { total_score: number | null; tier: string | null }
 }
+
+/** The three steps of the job, in order. Shown to the user while it runs. */
+export const DEEP_RESEARCH_STAGES = [
+  'Checking Companies House, the FCA Register and their LinkedIn profile',
+  "Reading the firm's website and scoring",
+  'Writing the messages',
+] as const
 
 /** A job that has sat queued or running this long has died and may be started again. */
 export const DEEP_RESEARCH_STALE_MS = 15 * 60 * 1000

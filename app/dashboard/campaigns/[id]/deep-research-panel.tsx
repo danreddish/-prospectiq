@@ -35,6 +35,9 @@ export function DeepResearchChips({ prospect }: { prospect: Prospect }) {
   if (deepResearchInProgress(state)) {
     return <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-rose-gold/20 text-brand-rose-gold animate-pulse">Researching</span>
   }
+  if (state.status === 'failed') {
+    return <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300">Research failed</span>
+  }
   if (state.status !== 'done') return null
   const verdict = state.evidence?.decision_maker?.verdict
   const d = verdict ? DECISION_LABELS[verdict] : null

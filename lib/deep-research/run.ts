@@ -13,7 +13,13 @@ import { writeOutreachSequence } from '../ai-engine'
 import { voiceSampleFrom } from '../voice'
 import { gatherEvidence, type Evidence } from './evidence'
 import { analyseProspect, type Finding } from './analyse'
-import type { DeepResearchState } from './state'
+import { DEEP_RESEARCH_STAGES, type DeepResearchState } from './state'
+
+/** An API error as one readable sentence, without the raw JSON. */
+function plainError(message: string): string {
+  const inner = message.match(/"message"\s*:\s*"([^"]+)"/)
+  return (inner ? inner[1] : message).replace(/`/g, '').slice(0, 200)
+}
 
 function adminClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -57,8 +63,9 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     admin.from('prospects').update({ deep_research: state, ...extra }).eq('id', prospectId)
 
   const first_pass = previous.first_pass || { total_score: prospect.total_score ?? null, tier: prospect.tier ?? null }
-  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass }
+  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, stage: DEEP_RESEARCH_STAGES[0] }
   await save(running)
+  const stage = (n: number) => save({ ...running, stage: DEEP_RESEARCH_STAGES[n] })
 
   try {
     const [{ data: campaign }, { data: profile }] = await Promise.all([
@@ -83,6 +90,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     })
     console.log(`[DeepResearch] Evidence in ${Date.now() - startedAt}ms: CH ${evidence.companies_house ? evidence.companies_house.matched_by : 'none'}, FCA ${evidence.fca ? evidence.fca.status : 'none'}, profile ${evidence.profile ? 'yes' : 'none'}, decision ${evidence.decision_maker.verdict}`)
 
+    await stage(1)
     const analysis = await analyseProspect(
       { name: prospect.name, role: prospect.role, company: prospect.company, location: prospect.location },
       evidence,
@@ -96,6 +104,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     ].slice(0, 9)
 
     // Messages from the verified findings. If this fails, the research still stands.
+    await stage(2)
     let outreach: unknown = undefined
     try {
       outreach = await writeOutreachSequence(
@@ -160,7 +169,7 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Deep research failed'
     console.error(`[DeepResearch] FAILED ${prospect.name}:`, message)
-    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: message.slice(0, 300), first_pass })
+    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass })
     return { ok: false, error: message }
   }
 }

@@ -104,6 +104,9 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const deepRunning = prospects.filter((p) => deepResearchInProgress(deepState(p))).length
   const deepEligible = isAdviser ? [] : prospects.filter((p) => deepResearchCanStart(deepState(p)))
   const lastInProgress = useRef(deepRunning)
+  // Live state of each job from the server, and the people in the run just started.
+  const [deepLive, setDeepLive] = useState<Record<string, { status: string; in_progress: boolean; stage: string | null }>>({})
+  const [deepBatch, setDeepBatch] = useState<string[]>([])
   // Tick boxes on the cards: run deep research on just these. None ticked = everyone eligible.
   const [deepPicked, setDeepPicked] = useState<Set<string>>(new Set())
   const deepPickedIds = deepEligible.filter((p) => deepPicked.has(p.id)).map((p) => p.id)
@@ -116,6 +119,22 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
       return next
     })
   }
+  // The progress strip: the run just started, or after a reload whoever is still running.
+  const deepStripIds = deepBatch.length > 0 ? deepBatch : prospects.filter((p) => deepResearchInProgress(deepState(p))).map((p) => p.id)
+  const deepStrip = deepStripIds
+    .map((id) => {
+      const p = prospects.find((x) => x.id === id)
+      if (!p) return null
+      const fromPage = deepState(p)
+      const live = deepLive[id]
+      const status = live?.status || fromPage?.status || 'queued'
+      const inProgress = live ? live.in_progress : deepResearchInProgress(fromPage)
+      return { id, name: cleanPersonName(p.name), status, inProgress, stage: live?.stage || fromPage?.stage || 'Waiting to start', error: fromPage?.error }
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
+  const deepStripDone = deepStrip.filter((x) => x.status === 'done').length
+  const deepStripFailed = deepStrip.filter((x) => x.status === 'failed').length
+  const deepStripFinished = deepStrip.filter((x) => !x.inProgress).length
 
   useEffect(() => {
     // Fresh data from the server: keep showing the same person, with their new details.
@@ -130,12 +149,15 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
         const res = await fetch(`/api/prospects/deep-research?campaign_id=${campaign.id}`, { cache: 'no-store' })
         if (!res.ok) return
         const data = await res.json()
+        const live: Record<string, { status: string; in_progress: boolean; stage: string | null }> = {}
+        for (const st of data.states || []) live[st.id] = { status: st.status, in_progress: st.in_progress, stage: st.stage }
+        setDeepLive(live)
         if (typeof data.in_progress === 'number' && data.in_progress < lastInProgress.current) {
           lastInProgress.current = data.in_progress
           router.refresh()
         }
       } catch {}
-    }, 10000)
+    }, 4000)
     return () => clearInterval(timer)
   }, [deepRunning, campaign.id, router])
 
@@ -144,6 +166,7 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     setDeepStarting(true)
     let started = 0
     let lastReason = ''
+    const startedIds: string[] = []
     try {
       // Five at a time, so each request stays short.
       for (let i = 0; i < ids.length; i += 5) {
@@ -158,12 +181,15 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
           break
         }
         started += data.started || 0
+        for (const r of data.results || []) if (r.started) startedIds.push(r.id)
         const refused = (data.results || []).find((r: { started: boolean; reason?: string }) => !r.started)
         if (refused?.reason) lastReason = refused.reason
       }
       if (started > 0) {
         toast.success(`Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`)
         setDeepPicked(new Set())
+        setDeepBatch(startedIds)
+        setDeepLive({})
         router.refresh()
       } else {
         toast.error(lastReason || 'Could not start deep research')
@@ -823,6 +849,50 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             )}
           </div>
         </div>
+
+        {/* v81: deep research progress */}
+        {!isAdviser && deepStrip.length > 0 && (
+          <div className="p-3 border-b border-brand-charcoal bg-brand-charcoal-deep/60">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-brand-cream text-xs font-semibold">
+                Deep research: {deepStripFinished} of {deepStrip.length} finished
+                {deepStripFailed > 0 && <span className="text-red-300 font-normal"> ({deepStripFailed} failed)</span>}
+              </p>
+              {deepStripFinished === deepStrip.length && (
+                <button onClick={() => { setDeepBatch([]); setDeepLive({}) }} className="text-[10px] text-brand-beige hover:text-brand-cream">
+                  Hide
+                </button>
+              )}
+            </div>
+            <div className="h-1.5 rounded bg-brand-charcoal overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={deepStrip.length} aria-valuenow={deepStripFinished}>
+              <div
+                className="h-full bg-brand-rose-gold transition-all duration-500"
+                style={{ width: `${Math.round((deepStripFinished / deepStrip.length) * 100)}%` }}
+              />
+            </div>
+            <ul className="mt-2 space-y-1">
+              {deepStrip.slice(0, 6).map((x) => (
+                <li key={x.id} className="text-[11px] leading-snug">
+                  <span className="text-brand-cream">{x.name}: </span>
+                  {x.inProgress ? (
+                    <span className="text-brand-rose-gold animate-pulse">{x.stage}</span>
+                  ) : x.status === 'done' ? (
+                    <span className="text-green-400">done</span>
+                  ) : (
+                    <span className="text-red-300">did not finish{x.error ? `: ${x.error}` : ''}</span>
+                  )}
+                </li>
+              ))}
+              {deepStrip.length > 6 && <li className="text-[11px] text-brand-beige">and {deepStrip.length - 6} more</li>}
+            </ul>
+            {deepStripFinished < deepStrip.length && (
+              <p className="text-brand-beige text-[10px] mt-2">About a minute each. You can carry on using the page.</p>
+            )}
+            {deepStripFinished === deepStrip.length && deepStripDone > 0 && (
+              <p className="text-brand-beige text-[10px] mt-2">Open a person and click the Research tab to see what was found.</p>
+            )}
+          </div>
+        )}
 
         {/* Tier filter */}
         <div className="p-3 border-b border-brand-charcoal flex gap-2">
