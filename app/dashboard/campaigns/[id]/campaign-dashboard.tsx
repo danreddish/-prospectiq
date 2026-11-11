@@ -86,7 +86,8 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const [tierFilter, setTierFilter] = useState<'all' | 'A' | 'B' | 'C'>('all')
   const [copiedStep, setCopiedStep] = useState<number | null>(null)
   const [writingOutreach, setWritingOutreach] = useState(false) // v76.2
-  const [showPending, setShowPending] = useState(false)
+  // Open from the start when nobody has been researched yet: it is all there is to show.
+  const [showPending, setShowPending] = useState(prospects.length === 0)
   const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set())
   const [researching, setResearching] = useState(false)
   const [researchProgress, setResearchProgress] = useState({ completed: 0, total: 0 })
@@ -568,14 +569,113 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
     toast.success('PDF report opened — use Print > Save as PDF')
   }
 
+  // Found but not yet researched. Built once so it can show both beside the
+  // researched list and on its own, before anyone has been researched.
+  const pendingPanel = pendingProspects.length > 0 ? (
+          <div className="border-t border-brand-charcoal">
+            <button
+              onClick={() => setShowPending(!showPending)}
+              className="w-full p-3 flex items-center justify-between text-left hover:bg-brand-charcoal-deep/50 transition-colors"
+            >
+              <div>
+                <p className="text-brand-rose-gold text-xs font-semibold">
+                  {pendingProspects.length} {isAdviser ? 'advisers' : 'prospects'} awaiting research
+                </p>
+                <p className="text-brand-beige text-[10px] mt-0.5">Click to select and research</p>
+              </div>
+              <svg className={`w-4 h-4 text-brand-beige transition-transform ${showPending ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showPending && (
+              <div className="p-2">
+                <div className="flex items-center gap-2 px-2 mb-2">
+                  <button
+                    onClick={() => setPendingSelected(new Set(pendingProspects.map(p => p.id)))}
+                    className="text-[10px] text-brand-beige hover:text-brand-cream"
+                  >
+                    Select all
+                  </button>
+                  <span className="text-brand-charcoal">|</span>
+                  <button
+                    onClick={() => setPendingSelected(new Set())}
+                    className="text-[10px] text-brand-beige hover:text-brand-cream"
+                  >
+                    Deselect all
+                  </button>
+                  <span className="text-brand-beige text-[10px] ml-auto">{pendingSelected.size} selected</span>
+                </div>
+
+                {pendingProspects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => togglePendingSelect(p.id)}
+                    className={`w-full text-left p-2.5 rounded-lg mb-1 transition-colors flex items-start gap-2 ${
+                      pendingSelected.has(p.id) ? 'bg-brand-rose-gold/10' : 'hover:bg-brand-charcoal-deep/50'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded border mt-0.5 flex-shrink-0 flex items-center justify-center ${
+                      pendingSelected.has(p.id) ? 'bg-brand-rose-gold border-brand-rose-gold' : 'border-brand-charcoal'
+                    }`}>
+                      {pendingSelected.has(p.id) && (
+                        <svg className="w-3 h-3 text-brand-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-brand-cream text-xs font-semibold truncate">{p.name}</p>
+                      <p className="text-brand-beige text-[10px] truncate">
+                        {p.role}{p.company ? ` at ${p.company}` : ''}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+
+                {pendingSelected.size > 0 && (
+                  <button
+                    onClick={handleResearchPending}
+                    disabled={researching}
+                    className="w-full mt-2 btn-primary text-xs py-2"
+                  >
+                    {researching
+                      ? `Researching ${researchProgress.completed}/${researchProgress.total}...`
+                      : `Research ${pendingSelected.size} ${isAdviser ? 'Adviser' : 'Prospect'}${pendingSelected.size > 1 ? 's' : ''}`
+                    }
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+  ) : null
+
   if (prospects.length === 0) {
+    const findHref = isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : `/dashboard/campaigns/new?campaign=${campaign.id}`
+    // Found but nobody researched yet: show them here, ready to tick and research.
+    if (pendingPanel) {
+      return (
+        <div className="max-w-xl mx-auto py-12">
+          <h2 className="text-brand-cream text-xl font-display mb-2 text-center">{campaign.name}</h2>
+          <p className="text-brand-beige mb-6 text-center">
+            {pendingProspects.length} {isAdviser ? 'advisers' : 'prospects'} found, none researched yet. Tick the ones you want and click Research.
+          </p>
+          <div className="rounded-lg border border-brand-charcoal bg-brand-charcoal-deeper overflow-hidden">{pendingPanel}</div>
+          <p className="text-center mt-6">
+            <a href={findHref} className="text-brand-rose-gold text-sm hover:underline">
+              {isAdviser ? 'Find more advisers' : 'Find more prospects'}
+            </a>
+          </p>
+        </div>
+      )
+    }
     return (
       <div className="text-center py-20">
         <h2 className="text-brand-cream text-xl font-display mb-2">{campaign.name}</h2>
         <p className="text-brand-beige mb-6">
           {isAdviser ? 'No researched advisers yet. Find advisers and run research.' : 'No completed prospects yet. Add prospects and run research.'}
         </p>
-        <a href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : '/dashboard/campaigns/new'} className="btn-primary text-sm">
+        <a href={findHref} className="btn-primary text-sm">
           {isAdviser ? 'Find Advisers' : 'Add Prospects'}
         </a>
       </div>
@@ -721,84 +821,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
         </div>
 
         {/* Pending prospects (found but not yet researched) */}
-        {pendingProspects.length > 0 && (
-          <div className="border-t border-brand-charcoal">
-            <button
-              onClick={() => setShowPending(!showPending)}
-              className="w-full p-3 flex items-center justify-between text-left hover:bg-brand-charcoal-deep/50 transition-colors"
-            >
-              <div>
-                <p className="text-brand-rose-gold text-xs font-semibold">
-                  {pendingProspects.length} {isAdviser ? 'advisers' : 'prospects'} awaiting research
-                </p>
-                <p className="text-brand-beige text-[10px] mt-0.5">Click to select and research</p>
-              </div>
-              <svg className={`w-4 h-4 text-brand-beige transition-transform ${showPending ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-
-            {showPending && (
-              <div className="p-2">
-                <div className="flex items-center gap-2 px-2 mb-2">
-                  <button
-                    onClick={() => setPendingSelected(new Set(pendingProspects.map(p => p.id)))}
-                    className="text-[10px] text-brand-beige hover:text-brand-cream"
-                  >
-                    Select all
-                  </button>
-                  <span className="text-brand-charcoal">|</span>
-                  <button
-                    onClick={() => setPendingSelected(new Set())}
-                    className="text-[10px] text-brand-beige hover:text-brand-cream"
-                  >
-                    Deselect all
-                  </button>
-                  <span className="text-brand-beige text-[10px] ml-auto">{pendingSelected.size} selected</span>
-                </div>
-
-                {pendingProspects.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => togglePendingSelect(p.id)}
-                    className={`w-full text-left p-2.5 rounded-lg mb-1 transition-colors flex items-start gap-2 ${
-                      pendingSelected.has(p.id) ? 'bg-brand-rose-gold/10' : 'hover:bg-brand-charcoal-deep/50'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded border mt-0.5 flex-shrink-0 flex items-center justify-center ${
-                      pendingSelected.has(p.id) ? 'bg-brand-rose-gold border-brand-rose-gold' : 'border-brand-charcoal'
-                    }`}>
-                      {pendingSelected.has(p.id) && (
-                        <svg className="w-3 h-3 text-brand-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-brand-cream text-xs font-semibold truncate">{p.name}</p>
-                      <p className="text-brand-beige text-[10px] truncate">
-                        {p.role}{p.company ? ` at ${p.company}` : ''}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-
-                {pendingSelected.size > 0 && (
-                  <button
-                    onClick={handleResearchPending}
-                    disabled={researching}
-                    className="w-full mt-2 btn-primary text-xs py-2"
-                  >
-                    {researching
-                      ? `Researching ${researchProgress.completed}/${researchProgress.total}...`
-                      : `Research ${pendingSelected.size} ${isAdviser ? 'Adviser' : 'Prospect'}${pendingSelected.size > 1 ? 's' : ''}`
-                    }
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        {pendingPanel}
       </div>
 
       {/* Main Panel */}
