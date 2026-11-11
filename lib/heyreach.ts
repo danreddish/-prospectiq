@@ -13,8 +13,9 @@
 //   - GET  /campaign/GetById?campaignId=         campaign with its sender accounts
 //   - POST /campaign/AddLeadsToCampaignV2        {campaignId, accountLeadPairs[]}
 //         -> {addedLeadsCount, updatedLeadsCount, failedLeadsCount}
-//         Only works on a running campaign (not a draft). A lead without a
-//         first name, last name or profile URL fails silently.
+//         Only works on a campaign that has been started (not a draft); a
+//         FINISHED one restarts (v80). A lead without a first name, last
+//         name or profile URL fails silently.
 //   - POST /lead/GetLead {profileUrl}            the LinkedIn profile HeyReach matched
 //   - POST /campaign/GetLeadsFromCampaign        {campaignId, offset, limit}
 //         -> {totalCount, items[]}, each with leadCampaignStatus,
@@ -28,8 +29,16 @@ import type { PipelineActivity, PipelineLead } from '@/lib/heyreach-pipeline'
 
 const HEYREACH_BASE = 'https://api.heyreach.io/api/public'
 
-/** Campaign statuses HeyReach accepts new leads in. */
-const PUSHABLE_STATUSES = new Set(['ACTIVE', 'IN_PROGRESS'])
+/** A campaign that is running now. */
+const RUNNING_STATUSES = new Set(['ACTIVE', 'IN_PROGRESS'])
+
+/**
+ * Campaign statuses HeyReach accepts new leads in. v80: FINISHED too. A
+ * started campaign with nobody left in it shows FINISHED, and HeyReach's help
+ * says adding a lead by API restarts it ("as soon as new leads are added
+ * campaign will get activated"). PAUSED stays refused: pausing is deliberate.
+ */
+const PUSHABLE_STATUSES = new Set(['ACTIVE', 'IN_PROGRESS', 'FINISHED'])
 
 export function heyReachKeyIsSet(): boolean {
   return !!process.env.HEYREACH_API_KEY
@@ -152,7 +161,7 @@ export async function findHeyReachCampaign(name: string, apiKey?: string): Promi
     if (items.length < limit || offset + limit >= total) break
   }
   if (matches.length === 0) return null
-  const running = matches.filter((m) => PUSHABLE_STATUSES.has(String(pick(m, 'status') || '').toUpperCase()))
+  const running = matches.filter((m) => RUNNING_STATUSES.has(String(pick(m, 'status') || '').toUpperCase()))
   if (running.length > 1) {
     throw new Error(`${running.length} running HeyReach campaigns are called "${name}". Rename or stop the extra ones first.`)
   }
@@ -165,8 +174,9 @@ export async function findHeyReachCampaign(name: string, apiKey?: string): Promi
 
 export function campaignProblem(campaign: HeyReachCampaign | null, name: string): string | null {
   if (!campaign) return `No HeyReach campaign called "${name}" was found.`
+  if (campaign.status === 'PAUSED') return `"${campaign.name}" is paused. Resume it in HeyReach first.`
   if (!PUSHABLE_STATUSES.has(campaign.status)) {
-    return `"${campaign.name}" is ${campaign.status || 'in an unknown state'}. HeyReach only takes new leads in a running campaign, so start it first.`
+    return `"${campaign.name}" is ${campaign.status || 'in an unknown state'}. HeyReach only takes new leads in a campaign that has been started, so start it first.`
   }
   if (campaign.accountIds.length === 0) return `"${campaign.name}" has no LinkedIn sender account attached.`
   return null
@@ -209,7 +219,8 @@ export async function addLeadToHeyReach(
     customUserFields: HEYREACH_MESSAGE_FIELDS.map((name) => ({ name, value: lead.messages[name] })),
   }
   const reply = await heyReachRequest('/campaign/AddLeadsToCampaignV2', {
-    body: { campaignId, accountLeadPairs: [{ linkedInAccountId, lead: sentLead }] },
+    // v80: a FINISHED campaign restarts when someone is added.
+    body: { campaignId, accountLeadPairs: [{ linkedInAccountId, lead: sentLead }], resumeFinishedCampaign: true },
     timeoutMs,
     apiKey,
   })

@@ -209,7 +209,7 @@ export default function ClientSetup({ onChange }: { onChange?: () => void }) {
         mark(1, 'doing')
         try {
           const json = await post('/api/heyreach/setup', { action: 'start', workspace_id: workspace.id, campaign_id: id })
-          if (json.running) mark(1, 'done', 'Running. Nothing is sent until you approve and send someone.')
+          if (json.running) mark(1, 'done', `Started${json.status === 'FINISHED' ? ': HeyReach shows it as finished until the first person is sent, which restarts it' : ''}. Nothing is sent until someone is approved and sent.`)
           else {
             startProblem = `HeyReach says it's ${String(json.status || 'not running').toLowerCase().replace(/_/g, ' ')}.`
             mark(1, 'failed', `${startProblem} Start it in HeyReach, or click Try again.`)
@@ -325,7 +325,7 @@ export default function ClientSetup({ onChange }: { onChange?: () => void }) {
                     {t.workspaceName} · {t.name}
                   </option>
                 ))}
-                <option value={BUILT_IN}>Built-in sequence (not yet checked in HeyReach)</option>
+                <option value={BUILT_IN}>Built-in sequence</option>
               </select>
             </label>
           </div>
@@ -343,8 +343,8 @@ export default function ClientSetup({ onChange }: { onChange?: () => void }) {
                 <pre className="text-brand-cream whitespace-pre-wrap font-sans leading-relaxed">{preview.steps.join('\n')}</pre>
                 {preview.warning && <p className="text-red-400 mt-2">{preview.warning}</p>}
                 {builtIn && (
-                  <p className="text-brand-rose-gold mt-2">
-                    The built-in sequence hasn&apos;t been checked against HeyReach yet. After set-up, open the campaign in HeyReach and check message 1 shows msg_1 as a variable before anyone is sent. Copying a campaign you built by hand avoids this.
+                  <p className="text-brand-beige mt-2">
+                    The same steps and variables as the hand-built &ldquo;{HEYREACH_TEST_CAMPAIGN}&rdquo; campaign. Copying a campaign is still the safer choice when you have one.
                   </p>
                 )}
               </>

@@ -11,8 +11,8 @@
 //
 // The safest sequence is a copy of one Dan already built by hand in HeyReach
 // and knows works (read with GetCampaignSequence), so the msg_1 to msg_4
-// variables are written exactly the way HeyReach expects. The built-in one is
-// a fallback and says so. No secrets and no server-only imports here.
+// variables are written exactly the way HeyReach expects. The built-in one
+// matches it and is the fallback. No secrets and no server-only imports here.
 
 import { HEYREACH_MESSAGE_FIELDS } from '@/lib/heyreach-shared'
 
@@ -134,8 +134,9 @@ export function sequenceFromReply(body: unknown): SequenceNode {
 /**
  * The built-in sequence: a connection request with no note, then msg_1 a day
  * after they accept and msg_2 to msg_4 five days apart. Pending requests are
- * withdrawn after 21 days. Untested against HeyReach's variable syntax, so the
- * page says to check it in HeyReach before anyone is sent.
+ * withdrawn after 21 days. The same steps, delays and {msg_1} variables as
+ * the hand-built "ProspectIQ test" campaign, read back with
+ * GetCampaignSequence on 11 Nov 2026.
  */
 export function standardSequence(): SequenceNode {
   const fallbacks = ['Thanks for connecting.', 'Hope the week is going well.', 'Hope all is well.', 'All the best.']

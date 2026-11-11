@@ -54,7 +54,9 @@ const PostSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('start'), workspace_id: z.string().uuid(), campaign_id: z.number().int().positive() }),
 ])
 
-const RUNNING = new Set(['ACTIVE', 'IN_PROGRESS'])
+// Started. A started campaign with nobody in it yet shows FINISHED, and the
+// first person sent restarts it.
+const STARTED = new Set(['ACTIVE', 'IN_PROGRESS', 'FINISHED'])
 
 /** The sequence to use: a copy of the template campaign's, or the built-in one. */
 async function loadSequence(template: z.infer<typeof Template> | null, timeoutMs: number): Promise<{ sequence: SequenceNode; source: string }> {
@@ -149,7 +151,7 @@ export async function POST(req: NextRequest) {
     try {
       const before = await getHeyReachCampaign(body.campaign_id, 3000, key)
       if (!before) return fail(404, `HeyReach can't find campaign ${body.campaign_id} in "${workspace.name}".`)
-      if (!RUNNING.has(before.status)) {
+      if (!STARTED.has(before.status)) {
         const reply = await startHeyReachCampaign(body.campaign_id, key, 4000)
         if (!reply.ok) {
           console.warn(`[Setup] StartCampaign ${body.campaign_id} in "${workspace.name}" returned ${reply.status}: ${reply.text.slice(0, 300)}`)
@@ -159,7 +161,7 @@ export async function POST(req: NextRequest) {
       const after = await getHeyReachCampaign(body.campaign_id, 3000, key)
       const status = after?.status || before.status
       console.log(`[Setup] ${auth.user.email} started "${before.name}" (${body.campaign_id}) in "${workspace.name}": ${status}`)
-      return NextResponse.json({ ok: true, status, running: RUNNING.has(status), name: after?.name || before.name, senders: after?.accountIds.length ?? before.accountIds.length }, NO_STORE)
+      return NextResponse.json({ ok: true, status, running: STARTED.has(status), name: after?.name || before.name, senders: after?.accountIds.length ?? before.accountIds.length }, NO_STORE)
     } catch (err) {
       return fail(502, err instanceof Error ? err.message : 'Could not reach HeyReach')
     }

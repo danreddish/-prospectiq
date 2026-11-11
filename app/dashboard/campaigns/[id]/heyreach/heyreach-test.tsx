@@ -329,7 +329,7 @@ export default function HeyReachTest({
           <p className="text-red-400 mt-2">{check.problem}</p>
         ) : (
           <p className="text-green-400 mt-2">
-            &ldquo;{check.campaign?.name}&rdquo;{admin && check.campaign ? ` (${check.campaign.workspaceName})` : ''} is {check.campaign?.status === 'IN_PROGRESS' || check.campaign?.status === 'ACTIVE' ? 'running' : check.campaign?.status}, with {check.campaign?.accountIds.length} LinkedIn account
+            &ldquo;{check.campaign?.name}&rdquo;{admin && check.campaign ? ` (${check.campaign.workspaceName})` : ''} is {check.campaign?.status === 'IN_PROGRESS' || check.campaign?.status === 'ACTIVE' ? 'running' : check.campaign?.status === 'FINISHED' ? 'waiting for its next person (sending restarts it)' : check.campaign?.status}, with {check.campaign?.accountIds.length} LinkedIn account
             {check.campaign?.accountIds.length === 1 ? '' : 's'}. Ready.
           </p>
         )}
