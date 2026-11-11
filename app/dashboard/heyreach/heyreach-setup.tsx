@@ -8,6 +8,7 @@ import { linkedInProfileSlug } from '@/lib/linkedin'
 import { HEYREACH_TEST_CAMPAIGN } from '@/lib/heyreach-shared'
 import PipelineAccess from './pipeline-access'
 import WorkspacesAdmin from './workspaces-admin'
+import ClientSetup from './client-setup'
 
 interface CampaignCheck {
   keySet: boolean
@@ -19,15 +20,24 @@ interface CampaignCheck {
 export default function HeyReachSetup({
   exclusionCount,
   campaigns,
+  users,
 }: {
   exclusionCount: number
   campaigns: { id: string; name: string }[]
+  /** v80: everyone else, for loading a client's Ulinc contacts for them */
+  users: { id: string; email: string; name: string | null }[]
 }) {
   const [total, setTotal] = useState(exclusionCount)
+  // v80: whose Ulinc contacts this section shows and replaces ('' = yours)
+  const [listOwner, setListOwner] = useState('')
+  const owner = users.find((u) => u.id === listOwner)
+  const ownerLabel = owner ? owner.name || owner.email : ''
   const [uploading, setUploading] = useState(false)
   const [uploadNote, setUploadNote] = useState('')
   const [check, setCheck] = useState<CampaignCheck | null>(null)
   const [accessVersion, setAccessVersion] = useState(0)
+  // v80: a workspace added or removed reloads the set-up form too
+  const [workspacesVersion, setWorkspacesVersion] = useState(0)
   const [checking, setChecking] = useState(false)
 
   async function runCheck() {
@@ -45,6 +55,22 @@ export default function HeyReachSetup({
   useEffect(() => {
     runCheck()
   }, [])
+
+  // v80: the count for whoever's list is chosen (yours keeps showing while it reloads)
+  const [ownerChosen, setOwnerChosen] = useState(false)
+  useEffect(() => {
+    if (!ownerChosen) return
+    setUploadNote('')
+    let live = true
+    if (listOwner) setTotal(-1)
+    fetch(`/api/heyreach/exclusions${listOwner ? `?user_id=${listOwner}` : ''}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => live && setTotal(typeof d.ulinc === 'number' ? d.ulinc : -1))
+      .catch(() => live && setTotal(-1))
+    return () => {
+      live = false
+    }
+  }, [listOwner, ownerChosen])
 
   async function handleFile(file: File) {
     setUploading(true)
@@ -102,7 +128,7 @@ export default function HeyReachSetup({
         const res = await fetch('/api/heyreach/exclusions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slugs: all.slice(i, i + 5000), upload_id: uploadId, final: i + 5000 >= all.length }),
+          body: JSON.stringify({ slugs: all.slice(i, i + 5000), upload_id: uploadId, final: i + 5000 >= all.length, ...(listOwner ? { for_user_id: listOwner } : {}) }),
         })
         const data = await res.json()
         if (!res.ok) throw new Error(`${data.error || 'Upload failed'} Your previous list is unchanged.`)
@@ -119,7 +145,7 @@ export default function HeyReachSetup({
         removed > 0 ? `${removed.toLocaleString('en-GB')} no longer in the export were removed.` : '',
       ]
       setUploadNote(parts.filter(Boolean).join(' '))
-      toast.success('Ulinc contacts saved')
+      toast.success(ownerLabel ? `Ulinc contacts saved for ${ownerLabel}` : 'Ulinc contacts saved')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed'
       setUploadNote(message)
@@ -143,15 +169,38 @@ export default function HeyReachSetup({
       </div>
 
       <section className="border border-brand-charcoal rounded-lg p-5">
-        <h2 className="text-brand-cream font-semibold">1. Your Ulinc contacts</h2>
+        <h2 className="text-brand-cream font-semibold">1. Ulinc contacts</h2>
         <p className="text-brand-beige text-sm mt-1">
-          Upload your Ulinc contact export (CSV). Find skips anyone on it, and HeyReach approval and sending refuse them, so nobody is contacted twice. A new upload replaces the old list once it has fully saved. People already sent to HeyReach stay excluded either way.
+          Upload a Ulinc contact export (CSV). Find skips anyone on it, and HeyReach approval and sending refuse them, so nobody is contacted twice. A new upload replaces the old list once it has fully saved. People already sent to HeyReach stay excluded either way.
         </p>
+        <p className="text-brand-beige text-sm mt-1">
+          For a client who also runs Ulinc, choose them below and upload their export: in Ulinc, open the campaign, then the People tab, then Export contacts &amp; conversations.
+        </p>
+        <label className="text-brand-beige text-xs flex flex-col gap-1 mt-3 max-w-sm">
+          Whose contacts
+          <select
+            value={listOwner}
+            onChange={(e) => {
+              setOwnerChosen(true)
+              setListOwner(e.target.value)
+            }}
+            disabled={uploading}
+            className="text-sm py-2 px-3"
+          >
+            <option value="">Mine</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name ? `${u.name} (${u.email})` : u.email}
+              </option>
+            ))}
+          </select>
+        </label>
         <p className="text-brand-cream text-sm mt-3">
-          Ulinc profiles on your list now: <span className="font-semibold">{total.toLocaleString('en-GB')}</span>
+          Ulinc profiles on {ownerLabel ? `${ownerLabel}'s` : 'your'} list now:{' '}
+          <span className="font-semibold">{total < 0 ? 'checking...' : total.toLocaleString('en-GB')}</span>
         </p>
         <label className={`btn-primary text-sm inline-block mt-4 cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-          {uploading ? 'Uploading...' : 'Upload Ulinc export'}
+          {uploading ? 'Uploading...' : ownerLabel ? `Upload ${ownerLabel}'s Ulinc export` : 'Upload Ulinc export'}
           <input
             type="file"
             accept=".csv,text/csv"
@@ -208,9 +257,11 @@ export default function HeyReachSetup({
         </div>
       </section>
 
-      <WorkspacesAdmin onChange={() => setAccessVersion((v) => v + 1)} />
+      <WorkspacesAdmin onChange={() => setWorkspacesVersion((v) => v + 1)} />
 
-      <PipelineAccess key={accessVersion} />
+      <ClientSetup key={workspacesVersion} onChange={() => setAccessVersion((v) => v + 1)} />
+
+      <PipelineAccess key={`${workspacesVersion}-${accessVersion}`} />
     </div>
   )
 }

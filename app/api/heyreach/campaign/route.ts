@@ -26,7 +26,7 @@ function pick(campaigns: WorkspaceCampaign[], wantedId: number | null, wantedWor
     return campaigns.find((c) => c.id === wantedId && (wantedWorkspace === undefined || c.workspaceId === wantedWorkspace)) || null
   }
   if (admin) return campaigns.find((c) => c.workspaceId === null && c.name.trim().toLowerCase() === HEYREACH_TEST_CAMPAIGN.toLowerCase()) || null
-  return campaigns.find((c) => c.status === 'IN_PROGRESS' || c.status === 'ACTIVE') || campaigns[0] || null
+  return campaigns.find((c) => c.status === 'IN_PROGRESS' || c.status === 'ACTIVE') || campaigns.find((c) => c.status === 'FINISHED') || campaigns[0] || null
 }
 
 export async function GET(req: NextRequest) {

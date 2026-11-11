@@ -92,7 +92,7 @@ export default function PipelineAccess() {
 
   return (
     <section className="border border-brand-charcoal rounded-lg p-5">
-      <h2 className="text-brand-cream font-semibold">5. Who sees and sends into which campaign</h2>
+      <h2 className="text-brand-cream font-semibold">6. Who sees and sends into which campaign</h2>
       <p className="text-brand-beige text-sm mt-1">
         Give a user a HeyReach campaign and they see its LinkedIn pipeline. Tick &ldquo;Can send into it&rdquo; to also let them send their own approved prospects into it from Send to LinkedIn. A campaign sends from the LinkedIn account attached to it, so only do that for a campaign running on their own LinkedIn. They see nothing else in HeyReach.
       </p>
