@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { deepResearchEnabled, triggerDeepResearch } from '@/lib/deep-research/trigger'
-import { deepResearchInProgress, researchContext, type DeepResearchState } from '@/lib/deep-research/state'
+import { carriedEvidence, deepResearchInProgress, researchContext, type DeepResearchState } from '@/lib/deep-research/state'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { writeOutreachSequence } from '@/lib/ai-engine'
 import { z } from 'zod'
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, deferred: true })
   }
   if ((!deep || registerOnly) && deepColumnReady && deepResearchEnabled()) {
-    const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString() }
+    const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString(), ...carriedEvidence(deep) }
     const { error: queueError } = await admin.from('prospects').update({ deep_research: queued }).eq('id', prospect.id).eq('user_id', user.id)
     if (!queueError && (await triggerDeepResearch(req.nextUrl.origin, prospect.id))) {
       stepLog(startedAt, 'Deep research started', setupStartedAt, prospect.name)

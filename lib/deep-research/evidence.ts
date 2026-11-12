@@ -213,6 +213,20 @@ export async function gatherEvidence(input: EvidenceInput, opts: { registersOnly
   return { companies_house, fca: publicFca, profile, decision_maker, age, missing }
 }
 
+/**
+ * Evidence from an earlier run, completed. A register check has everything
+ * but the LinkedIn profile, so only that is looked up. Evidence that already
+ * had its profile look-up is returned as it is, so a retry costs no second
+ * Apollo credit.
+ */
+export async function completeEvidence(input: EvidenceInput, prior: Evidence, priorIsFull: boolean): Promise<Evidence> {
+  if (priorIsFull) return prior
+  const profile = await safe('LinkedIn profile', () => profileEvidence(input), null)
+  const missing = prior.missing.filter((m) => !m.startsWith('LinkedIn profile'))
+  if (!profile) missing.push('LinkedIn profile: no profile details available')
+  return { ...prior, profile, missing }
+}
+
 async function fcaEvidence(input: EvidenceInput): Promise<(FcaEvidence & { _companiesHouseNumber: string | null }) | null> {
   if (!input.company) return null
   // The register's search is loose. Only keep a firm whose name is really this one.

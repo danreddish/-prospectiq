@@ -140,6 +140,9 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const stripIsRegisters = deepKind === 'registers' || deepStrip.every((x) => x.status === 'checking' || x.status === 'checked')
   const deepStripFailed = deepStrip.filter((x) => x.status === 'failed').length
   const deepStripFinished = deepStrip.filter((x) => !x.inProgress).length
+  // When everyone failed for the same reason (no credit, say), say it once.
+  const failedReasons = Array.from(new Set(deepStrip.filter((x) => x.status === 'failed').map((x) => x.error || '')))
+  const sharedFailure = deepStripFailed > 1 && failedReasons.length === 1 && failedReasons[0] ? failedReasons[0] : null
 
   useEffect(() => {
     // Fresh data from the server: keep showing the same person, with their new details.
@@ -898,6 +901,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                 style={{ width: `${Math.round((deepStripFinished / deepStrip.length) * 100)}%` }}
               />
             </div>
+            {sharedFailure && <p className="text-red-300 text-[11px] leading-snug mt-2">{sharedFailure}</p>}
             <ul className="mt-2 space-y-1">
               {deepStrip.slice(0, 6).map((x) => (
                 <li key={x.id} className="text-[11px] leading-snug">
@@ -907,7 +911,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   ) : x.status === 'done' || x.status === 'checked' ? (
                     <span className="text-green-400">{x.status === 'checked' ? 'checked' : 'done'}</span>
                   ) : (
-                    <span className="text-red-300">did not finish{x.error ? `: ${x.error}` : ''}</span>
+                    <span className="text-red-300">did not finish{x.error && !sharedFailure ? `: ${x.error}` : ''}</span>
                   )}
                 </li>
               ))}

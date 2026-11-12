@@ -779,3 +779,29 @@ Return this exact JSON structure:
 
   return result
 }
+
+export const OUT_OF_CREDIT_MESSAGE = "The app's Anthropic credit has run out. Top it up in the Anthropic Console, then run this again."
+
+/** Is this error Anthropic refusing the request because the account has no credit? */
+export function isOutOfCredit(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return /credit balance is too low|purchase credits|billing/i.test(message)
+}
+
+/**
+ * v82: a one-token call to see whether Claude will answer at all, made
+ * before a batch of deep research is started. Only an out-of-credit answer
+ * stops the batch. A timeout or a busy moment does not, since the jobs
+ * themselves retry.
+ */
+export async function claudeHasCredit(): Promise<boolean> {
+  try {
+    await getAnthropic().messages.create(
+      { model: 'claude-haiku-4-5-20251001', max_tokens: 1, messages: [{ role: 'user', content: 'ok' }] },
+      { maxRetries: 0, timeout: 4000 }
+    )
+    return true
+  } catch (err) {
+    return !isOutOfCredit(err)
+  }
+}

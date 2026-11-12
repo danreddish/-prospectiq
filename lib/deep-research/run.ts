@@ -9,11 +9,11 @@
 // Relative imports only: Netlify's function bundler does not read "@/".
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { writeOutreachSequence } from '../ai-engine'
+import { OUT_OF_CREDIT_MESSAGE, isOutOfCredit, writeOutreachSequence } from '../ai-engine'
 import { voiceSampleFrom } from '../voice'
-import { attachCompanyByNumber, gatherEvidence, type Evidence } from './evidence'
+import { attachCompanyByNumber, completeEvidence, gatherEvidence, type Evidence } from './evidence'
 import { analyseProspect, reboundAccessibility, type Finding } from './analyse'
-import { DEEP_RESEARCH_STAGES, type DeepResearchState } from './state'
+import { DEEP_RESEARCH_STAGES, carriedEvidence, type DeepResearchState } from './state'
 
 /** An API error as one readable sentence, without the raw JSON. */
 function plainError(message: string): string {
@@ -64,10 +64,12 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
 
   const first_pass = previous.first_pass || { total_score: prospect.total_score ?? null, tier: prospect.tier ?? null }
   const attempts = (previous.attempts || 0) + 1
-  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, attempts, stage: DEEP_RESEARCH_STAGES[0] }
+  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, attempts, stage: DEEP_RESEARCH_STAGES[0], ...carriedEvidence(previous) }
   await save(running)
   const stage = (n: number) => save({ ...running, stage: DEEP_RESEARCH_STAGES[n] })
 
+  // Kept if the run fails after this point, so the next go can reuse it.
+  let gathered: Evidence | null = null
   try {
     const [{ data: campaign }, { data: profile }] = await Promise.all([
       admin.from('campaigns').select('niche, sender_name, service_profile, custom_instructions').eq('id', prospect.campaign_id).maybeSingle(),
@@ -89,7 +91,13 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       headline: prospect.headline,
       company_number: prospect.company_number,
     }
-    const evidence = await gatherEvidence(evidenceInput)
+    // Evidence from a register check or a failed run is reused, so the registers
+    // are not read twice and a retry does not pay for the profile again.
+    const carried = carriedEvidence(previous)
+    const evidence = carried.evidence
+      ? await completeEvidence(evidenceInput, carried.evidence, !!carried.evidence_full)
+      : await gatherEvidence(evidenceInput)
+    gathered = evidence
     console.log(`[DeepResearch] Evidence in ${Date.now() - startedAt}ms: CH ${evidence.companies_house ? evidence.companies_house.matched_by : 'none'}, FCA ${evidence.fca ? evidence.fca.status : 'none'}, profile ${evidence.profile ? 'yes' : 'none'}, decision ${evidence.decision_maker.verdict}`)
 
     await stage(1)
@@ -159,6 +167,8 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       started_at: running.started_at,
       finished_at: new Date().toISOString(),
       evidence,
+      evidence_at: new Date().toISOString(),
+      evidence_full: true,
       findings,
       who_they_serve: analysis.who_they_serve,
       fit: analysis.fit,
@@ -188,9 +198,10 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     console.log(`[DeepResearch] Done ${prospect.name} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ${analysis.total_score}/40, ${analysis.fit} fit, ${analysis.searches} searches`)
     return { ok: true }
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Deep research failed'
+    const message = isOutOfCredit(err) ? OUT_OF_CREDIT_MESSAGE : err instanceof Error ? err.message : 'Deep research failed'
     console.error(`[DeepResearch] FAILED ${prospect.name}:`, message)
-    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass, attempts })
+    const kept = gathered ? { evidence: gathered, evidence_at: new Date().toISOString(), evidence_full: true } : carriedEvidence(previous)
+    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass, attempts, ...kept })
     return { ok: false, error: message }
   }
 }
@@ -295,7 +306,7 @@ export async function runRegisterCheck(prospectIds: string[]): Promise<{ ok: boo
           { registersOnly: true }
         )
         companyNumber = evidence.companies_house?.company_number || null
-        next = { status: 'checked', queued_at: previous.queued_at, checked_at: new Date().toISOString(), evidence, first_pass: previous.first_pass, attempts: previous.attempts }
+        next = { status: 'checked', queued_at: previous.queued_at, checked_at: new Date().toISOString(), evidence, evidence_at: new Date().toISOString(), evidence_full: false, first_pass: previous.first_pass, attempts: previous.attempts }
       } catch (err) {
         // A failed check is not a failed research: put the person back to untouched.
         console.error(`[RegisterCheck] ${row.name}:`, err instanceof Error ? err.message : err)

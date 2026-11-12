@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { deepResearchEnabled, triggerDeepResearch, triggerRegisterCheck } from '@/lib/deep-research/trigger'
-import { DEEP_RESEARCH_STAGES, REGISTER_CHECK_STAGE, deepResearchCanStart, deepResearchInProgress, registerCheckCanStart, fcaLabel, type DeepResearchState } from '@/lib/deep-research/state'
+import { DEEP_RESEARCH_STAGES, REGISTER_CHECK_STAGE, deepResearchCanStart, deepResearchInProgress, registerCheckCanStart, fcaLabel, carriedEvidence, type DeepResearchState } from '@/lib/deep-research/state'
+import { OUT_OF_CREDIT_MESSAGE, claudeHasCredit } from '@/lib/ai-engine'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,6 +66,12 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, started: ids.length, results: ids.map((id) => ({ id, started: true })) }, NO_STORE)
   }
+  // v82: one tiny call first. If the Anthropic account is out of credit, say so
+  // once and start nothing, so a whole batch does not fail person by person.
+  if (!(await claudeHasCredit())) {
+    return NextResponse.json({ error: OUT_OF_CREDIT_MESSAGE }, { status: 402, ...NO_STORE })
+  }
+
   const results = await Promise.all(
     (rows || []).map(async (row) => {
       const state = (row.deep_research || null) as DeepResearchState | null
@@ -86,7 +93,7 @@ export async function POST(req: NextRequest) {
       }
       // Carry the count of earlier runs, so a retry is counted as one.
       const attempts = state?.attempts || (state?.finished_at ? 1 : 0)
-      const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString(), first_pass: state?.first_pass, attempts }
+      const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString(), first_pass: state?.first_pass, attempts, ...carriedEvidence(state) }
       const { error: queueError } = await admin.from('prospects').update({ deep_research: queued }).eq('id', row.id).eq('user_id', user.id)
       if (queueError) return { id: row.id, started: false, reason: 'Could not queue it.' }
       const ok = await triggerDeepResearch(origin, row.id)

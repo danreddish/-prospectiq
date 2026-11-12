@@ -29,6 +29,9 @@ export interface DeepResearchState {
   searches?: number
   web_search?: boolean
   model?: string
+  /** When `evidence` was gathered, and whether it includes the LinkedIn profile look-up (an Apollo credit). */
+  evidence_at?: string
+  evidence_full?: boolean
   /** How many times the full research has run for this person. */
   attempts?: number
   /** False when the research finished but the messages could not be written. */
@@ -65,6 +68,18 @@ export function deepResearchCanStart(state: DeepResearchState | null | undefined
     return state.evidence?.decision_maker?.verdict === 'unknown' && (state.attempts || 1) < 2
   }
   return !deepResearchInProgress(state)
+}
+
+/** Evidence is reused for a week: long enough for a retry, short enough to stay true. */
+const EVIDENCE_FRESH_MS = 7 * 24 * 60 * 60 * 1000
+
+/** What a new run may carry over from the last one: the evidence, if it is recent. */
+export function carriedEvidence(state: DeepResearchState | null | undefined, now: number = Date.now()): Pick<DeepResearchState, 'evidence' | 'evidence_at' | 'evidence_full'> {
+  // A finished run is only started again to try the matching afresh, so it starts clean.
+  if (!state?.evidence || state.status === 'done') return {}
+  const at = Date.parse(state.evidence_at || state.checked_at || state.finished_at || '')
+  if (!Number.isFinite(at) || now - at > EVIDENCE_FRESH_MS) return {}
+  return { evidence: state.evidence, evidence_at: new Date(at).toISOString(), evidence_full: !!state.evidence_full }
 }
 
 /** Has this person had neither the register check nor deep research? */
