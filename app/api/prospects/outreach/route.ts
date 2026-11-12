@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { deepResearchEnabled, triggerDeepResearch } from '@/lib/deep-research/trigger'
-import { deepResearchInProgress, researchContext, type DeepResearchState } from '@/lib/deep-research/state'
+import { carriedEvidence, deepResearchInProgress, researchContext, type DeepResearchState } from '@/lib/deep-research/state'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { writeOutreachSequence } from '@/lib/ai-engine'
 import { z } from 'zod'
@@ -91,11 +91,13 @@ export async function POST(req: NextRequest) {
   const deepRes = await supabase.from('prospects').select('deep_research').eq('id', prospect.id).maybeSingle()
   const deepColumnReady = !deepRes.error
   const deep = ((deepRes.data as { deep_research?: unknown } | null)?.deep_research || null) as DeepResearchState | null
-  if (deepResearchInProgress(deep)) {
+  // v82: a register check (done or still running) is not deep research, so it does not count here.
+  const registerOnly = deep?.status === 'checked' || deep?.status === 'checking'
+  if (!registerOnly && deepResearchInProgress(deep)) {
     return NextResponse.json({ ok: true, deferred: true })
   }
-  if (!deep && deepColumnReady && deepResearchEnabled()) {
-    const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString() }
+  if ((!deep || registerOnly) && deepColumnReady && deepResearchEnabled()) {
+    const queued: DeepResearchState = { status: 'queued', queued_at: new Date().toISOString(), ...carriedEvidence(deep) }
     const { error: queueError } = await admin.from('prospects').update({ deep_research: queued }).eq('id', prospect.id).eq('user_id', user.id)
     if (!queueError && (await triggerDeepResearch(req.nextUrl.origin, prospect.id))) {
       stepLog(startedAt, 'Deep research started', setupStartedAt, prospect.name)

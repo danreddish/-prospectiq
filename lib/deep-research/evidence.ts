@@ -184,16 +184,17 @@ export async function attachCompanyByNumber(input: EvidenceInput, evidence: Evid
   return true
 }
 
-export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
+export async function gatherEvidence(input: EvidenceInput, opts: { registersOnly?: boolean } = {}): Promise<Evidence> {
   const missing: string[] = []
 
   // FCA Register and the LinkedIn profile do not depend on each other.
   const [fca, profile] = await Promise.all([
     safe('FCA Register', () => fcaEvidence(input), null),
-    safe('LinkedIn profile', () => profileEvidence(input), null),
+    // The register check leaves the profile alone: it costs an Apollo credit.
+    opts.registersOnly ? Promise.resolve(null) : safe('LinkedIn profile', () => profileEvidence(input), null),
   ])
   if (!fca) missing.push('FCA Register: no firm matched by name')
-  if (!profile) missing.push('LinkedIn profile: no profile details available')
+  if (!profile && !opts.registersOnly) missing.push('LinkedIn profile: no profile details available')
 
   const fcaCompanyNumber = fca?._companiesHouseNumber || null
   const match = await safe('Companies House match', () => matchCompany(input, fcaCompanyNumber), null)
@@ -210,6 +211,20 @@ export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
     ? { frn: fca.frn, name: fca.name, status: fca.status, business_type: fca.business_type, individuals: fca.individuals, website: fca.website, url: fca.url }
     : null
   return { companies_house, fca: publicFca, profile, decision_maker, age, missing }
+}
+
+/**
+ * Evidence from an earlier run, completed. A register check has everything
+ * but the LinkedIn profile, so only that is looked up. Evidence that already
+ * had its profile look-up is returned as it is, so a retry costs no second
+ * Apollo credit.
+ */
+export async function completeEvidence(input: EvidenceInput, prior: Evidence, priorIsFull: boolean): Promise<Evidence> {
+  if (priorIsFull) return prior
+  const profile = await safe('LinkedIn profile', () => profileEvidence(input), null)
+  const missing = prior.missing.filter((m) => !m.startsWith('LinkedIn profile'))
+  if (!profile) missing.push('LinkedIn profile: no profile details available')
+  return { ...prior, profile, missing }
 }
 
 async function fcaEvidence(input: EvidenceInput): Promise<(FcaEvidence & { _companiesHouseNumber: string | null }) | null> {

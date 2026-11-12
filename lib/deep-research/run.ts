@@ -9,11 +9,11 @@
 // Relative imports only: Netlify's function bundler does not read "@/".
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { writeOutreachSequence } from '../ai-engine'
+import { OUT_OF_CREDIT_MESSAGE, isOutOfCredit, writeOutreachSequence } from '../ai-engine'
 import { voiceSampleFrom } from '../voice'
-import { attachCompanyByNumber, gatherEvidence, type Evidence } from './evidence'
+import { attachCompanyByNumber, completeEvidence, gatherEvidence, type Evidence } from './evidence'
 import { analyseProspect, reboundAccessibility, type Finding } from './analyse'
-import { DEEP_RESEARCH_STAGES, type DeepResearchState } from './state'
+import { DEEP_RESEARCH_STAGES, carriedEvidence, type DeepResearchState } from './state'
 
 /** An API error as one readable sentence, without the raw JSON. */
 function plainError(message: string): string {
@@ -64,10 +64,12 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
 
   const first_pass = previous.first_pass || { total_score: prospect.total_score ?? null, tier: prospect.tier ?? null }
   const attempts = (previous.attempts || 0) + 1
-  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, attempts, stage: DEEP_RESEARCH_STAGES[0] }
+  const running: DeepResearchState = { status: 'running', queued_at: previous.queued_at, started_at: new Date().toISOString(), first_pass, attempts, stage: DEEP_RESEARCH_STAGES[0], ...carriedEvidence(previous) }
   await save(running)
   const stage = (n: number) => save({ ...running, stage: DEEP_RESEARCH_STAGES[n] })
 
+  // Kept if the run fails after this point, so the next go can reuse it.
+  let gathered: Evidence | null = null
   try {
     const [{ data: campaign }, { data: profile }] = await Promise.all([
       admin.from('campaigns').select('niche, sender_name, service_profile, custom_instructions').eq('id', prospect.campaign_id).maybeSingle(),
@@ -89,7 +91,13 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       headline: prospect.headline,
       company_number: prospect.company_number,
     }
-    const evidence = await gatherEvidence(evidenceInput)
+    // Evidence from a register check or a failed run is reused, so the registers
+    // are not read twice and a retry does not pay for the profile again.
+    const carried = carriedEvidence(previous)
+    const evidence = carried.evidence
+      ? await completeEvidence(evidenceInput, carried.evidence, !!carried.evidence_full)
+      : await gatherEvidence(evidenceInput)
+    gathered = evidence
     console.log(`[DeepResearch] Evidence in ${Date.now() - startedAt}ms: CH ${evidence.companies_house ? evidence.companies_house.matched_by : 'none'}, FCA ${evidence.fca ? evidence.fca.status : 'none'}, profile ${evidence.profile ? 'yes' : 'none'}, decision ${evidence.decision_maker.verdict}`)
 
     await stage(1)
@@ -159,6 +167,8 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
       started_at: running.started_at,
       finished_at: new Date().toISOString(),
       evidence,
+      evidence_at: new Date().toISOString(),
+      evidence_full: true,
       findings,
       who_they_serve: analysis.who_they_serve,
       fit: analysis.fit,
@@ -188,9 +198,10 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     console.log(`[DeepResearch] Done ${prospect.name} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ${analysis.total_score}/40, ${analysis.fit} fit, ${analysis.searches} searches`)
     return { ok: true }
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Deep research failed'
+    const message = isOutOfCredit(err) ? OUT_OF_CREDIT_MESSAGE : err instanceof Error ? err.message : 'Deep research failed'
     console.error(`[DeepResearch] FAILED ${prospect.name}:`, message)
-    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass, attempts })
+    const kept = gathered ? { evidence: gathered, evidence_at: new Date().toISOString(), evidence_full: true } : carriedEvidence(previous)
+    await save({ status: 'failed', queued_at: previous.queued_at, started_at: running.started_at, finished_at: new Date().toISOString(), error: plainError(message), first_pass, attempts, ...kept })
     return { ok: false, error: message }
   }
 }
@@ -262,4 +273,54 @@ export async function rewriteMessages(prospectId: string): Promise<{ ok: boolean
     await admin.from('prospects').update({ deep_research: done({ outreach_error: message }) }).eq('id', prospectId)
     return { ok: false, error: message }
   }
+}
+
+/**
+ * v82: the quick register check for a list of people. Companies House and
+ * the FCA Register only: who the directors are, who owns the firm, whether it
+ * is directly authorised. No Claude, no Apollo, so it costs nothing and can
+ * run on everyone straight after a search, before any deep research.
+ *
+ * Three at a time, to stay inside the registers' rate limits. A person is
+ * only written to if they are still marked 'checking', so a deep research
+ * run started in the meantime is never overwritten.
+ */
+export async function runRegisterCheck(prospectIds: string[]): Promise<{ ok: boolean; checked: number }> {
+  const admin = adminClient()
+  const { data: rows } = await admin
+    .from('prospects')
+    .select('id, name, role, company, location, linkedin_url, headline, company_number, deep_research')
+    .in('id', prospectIds)
+  const todo = (rows || []).filter((r) => (r.deep_research as DeepResearchState | null)?.status === 'checking')
+  let checked = 0
+  const worker = async () => {
+    for (;;) {
+      const row = todo.shift()
+      if (!row) return
+      const previous = row.deep_research as DeepResearchState
+      let next: DeepResearchState
+      let companyNumber: string | null = null
+      try {
+        const evidence = await gatherEvidence(
+          { name: row.name, role: row.role, company: row.company, location: row.location, linkedin_url: row.linkedin_url, headline: row.headline, company_number: row.company_number },
+          { registersOnly: true }
+        )
+        companyNumber = evidence.companies_house?.company_number || null
+        next = { status: 'checked', queued_at: previous.queued_at, checked_at: new Date().toISOString(), evidence, evidence_at: new Date().toISOString(), evidence_full: false, first_pass: previous.first_pass, attempts: previous.attempts }
+      } catch (err) {
+        // A failed check is not a failed research: put the person back to untouched.
+        console.error(`[RegisterCheck] ${row.name}:`, err instanceof Error ? err.message : err)
+        next = { status: 'checked', queued_at: previous.queued_at, checked_at: new Date().toISOString(), first_pass: previous.first_pass, attempts: previous.attempts }
+      }
+      const { error } = await admin
+        .from('prospects')
+        .update({ deep_research: next, ...(companyNumber && !row.company_number ? { company_number: companyNumber } : {}) })
+        .eq('id', row.id)
+        .eq('deep_research->>status', 'checking')
+      if (!error) checked++
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  console.log(`[RegisterCheck] Checked ${checked} of ${prospectIds.length}`)
+  return { ok: true, checked }
 }
