@@ -184,16 +184,17 @@ export async function attachCompanyByNumber(input: EvidenceInput, evidence: Evid
   return true
 }
 
-export async function gatherEvidence(input: EvidenceInput): Promise<Evidence> {
+export async function gatherEvidence(input: EvidenceInput, opts: { registersOnly?: boolean } = {}): Promise<Evidence> {
   const missing: string[] = []
 
   // FCA Register and the LinkedIn profile do not depend on each other.
   const [fca, profile] = await Promise.all([
     safe('FCA Register', () => fcaEvidence(input), null),
-    safe('LinkedIn profile', () => profileEvidence(input), null),
+    // The register check leaves the profile alone: it costs an Apollo credit.
+    opts.registersOnly ? Promise.resolve(null) : safe('LinkedIn profile', () => profileEvidence(input), null),
   ])
   if (!fca) missing.push('FCA Register: no firm matched by name')
-  if (!profile) missing.push('LinkedIn profile: no profile details available')
+  if (!profile && !opts.registersOnly) missing.push('LinkedIn profile: no profile details available')
 
   const fcaCompanyNumber = fca?._companiesHouseNumber || null
   const match = await safe('Companies House match', () => matchCompany(input, fcaCompanyNumber), null)

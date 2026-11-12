@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { deepResearchEnabled, triggerDeepResearch } from '@/lib/deep-research/trigger'
-import { DEEP_RESEARCH_STAGES, deepResearchCanStart, deepResearchInProgress, type DeepResearchState } from '@/lib/deep-research/state'
+import { deepResearchEnabled, triggerDeepResearch, triggerRegisterCheck } from '@/lib/deep-research/trigger'
+import { DEEP_RESEARCH_STAGES, REGISTER_CHECK_STAGE, deepResearchCanStart, deepResearchInProgress, registerCheckCanStart, fcaLabel, type DeepResearchState } from '@/lib/deep-research/state'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,9 +19,10 @@ const NO_STORE = { headers: { 'Cache-Control': 'no-store' } }
 const StartSchema = z.object({
   campaign_id: z.string().uuid(),
   // Five at a time keeps the request well inside Netlify's 10 seconds.
-  prospect_ids: z.array(z.string().uuid()).min(1).max(5),
+  // Deep research: five at a time. The register check is one background job for the whole list.
+  prospect_ids: z.array(z.string().uuid()).min(1).max(100),
   // 'messages': write the outreach again from the saved findings, no new research.
-  mode: z.enum(['research', 'messages']).optional(),
+  mode: z.enum(['research', 'messages', 'registers']).optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -35,6 +36,9 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400, ...NO_STORE })
   const { campaign_id, prospect_ids } = parsed.data
   const mode = parsed.data.mode || 'research'
+  if (mode !== 'registers' && prospect_ids.length > 5) {
+    return NextResponse.json({ error: 'Five at a time for deep research.' }, { status: 400, ...NO_STORE })
+  }
 
   const { data: rows, error } = await supabase
     .from('prospects')
@@ -46,6 +50,21 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient()
   const origin = req.nextUrl.origin
+
+  // v82: the quick register check. Free and fast, so it takes the whole list
+  // in one background job. Only people nothing has been run on yet.
+  if (mode === 'registers') {
+    const ids = (rows || []).filter((r) => registerCheckCanStart((r.deep_research || null) as DeepResearchState | null)).map((r) => r.id)
+    if (ids.length === 0) return NextResponse.json({ ok: true, started: 0, results: [] }, NO_STORE)
+    const checking: DeepResearchState = { status: 'checking', queued_at: new Date().toISOString(), stage: REGISTER_CHECK_STAGE }
+    const { error: markError } = await admin.from('prospects').update({ deep_research: checking }).in('id', ids).eq('user_id', user.id)
+    if (markError) return NextResponse.json({ error: 'Could not start the register check.' }, { status: 500, ...NO_STORE })
+    if (!(await triggerRegisterCheck(origin, ids))) {
+      await admin.from('prospects').update({ deep_research: null }).in('id', ids).eq('deep_research->>status', 'checking')
+      return NextResponse.json({ error: 'Could not start the register check. Try again.' }, { status: 502, ...NO_STORE })
+    }
+    return NextResponse.json({ ok: true, started: ids.length, results: ids.map((id) => ({ id, started: true })) }, NO_STORE)
+  }
   const results = await Promise.all(
     (rows || []).map(async (row) => {
       const state = (row.deep_research || null) as DeepResearchState | null
@@ -94,16 +113,25 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('prospects')
-    .select('id, status:deep_research->>status, queued_at:deep_research->>queued_at, started_at:deep_research->>started_at, stage:deep_research->>stage')
+    .select('id, name, company, status:deep_research->>status, queued_at:deep_research->>queued_at, started_at:deep_research->>started_at, stage:deep_research->>stage, verdict:deep_research->evidence->decision_maker->>verdict, fca_type:deep_research->evidence->fca->>business_type, fca_status:deep_research->evidence->fca->>status')
     .eq('campaign_id', campaignId)
     .eq('user_id', user.id)
     .not('deep_research', 'is', null)
   if (error) return NextResponse.json({ error: 'Could not load' }, { status: 500, ...NO_STORE })
 
   const states = (data || []).map((r) => {
-    const row = r as unknown as { id: string; status: string; queued_at: string | null; started_at: string | null; stage: string | null }
+    const row = r as unknown as { id: string; name: string; company: string | null; status: string; queued_at: string | null; started_at: string | null; stage: string | null; verdict: string | null; fca_type: string | null; fca_status: string | null }
     const inProgress = deepResearchInProgress({ status: row.status as DeepResearchState['status'], queued_at: row.queued_at || undefined, started_at: row.started_at || undefined })
-    return { id: row.id, status: row.status, in_progress: inProgress, stage: inProgress ? row.stage || 'Waiting to start' : null }
+    return {
+      id: row.id,
+      name: row.name,
+      company: row.company,
+      status: row.status,
+      in_progress: inProgress,
+      stage: inProgress ? row.stage || 'Waiting to start' : null,
+      verdict: row.verdict,
+      fca: fcaLabel(row.fca_type, row.fca_status),
+    }
   })
   return NextResponse.json({ ok: true, states, in_progress: states.filter((s) => s.in_progress).length }, NO_STORE)
 }

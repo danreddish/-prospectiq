@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Research this prospect first.' }, { status: 409 })
   }
   // v81: messages written mid-research would use the first-pass guesses.
-  if (deepResearchInProgress(prospect.deep_research)) {
+  if (prospect.deep_research?.status !== 'checking' && deepResearchInProgress(prospect.deep_research)) {
     return NextResponse.json({ error: 'Deep research is still running for this person. Try again in a minute.' }, { status: 409 })
   }
   const profileUrl = canonicalProfileUrl(prospect.linkedin_url)

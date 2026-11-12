@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import DeepResearchPanel, { DeepResearchChips, PROVISIONAL_TITLE, deepState, scoreIsProvisional } from './deep-research-panel'
-import { deepResearchCanStart, deepResearchInProgress } from '@/lib/deep-research/state'
+import DeepResearchPanel, { DeepResearchChips, PROVISIONAL_TITLE, deepState, researchRunning, scoreIsProvisional } from './deep-research-panel'
+import { deepResearchCanStart, deepResearchInProgress, registerCheckCanStart } from '@/lib/deep-research/state'
 import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption, ADVISER_SCORE_LABELS, AdviserFcaData } from '@/types'
 import { toast } from 'sonner'
 import {
@@ -101,7 +101,11 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   // getting on, and refresh the page's data whenever one finishes.
   const router = useRouter()
   const [deepStarting, setDeepStarting] = useState(false)
-  const deepRunning = prospects.filter((p) => deepResearchInProgress(deepState(p))).length
+  // Researched people and those still awaiting research: the register check covers both.
+  const everyone = [...prospects, ...pendingProspects]
+  const deepRunning = everyone.filter((p) => deepResearchInProgress(deepState(p))).length
+  const registerEligible = isAdviser ? [] : everyone.filter((p) => registerCheckCanStart(deepState(p)))
+  const [deepKind, setDeepKind] = useState<'research' | 'messages' | 'registers'>('research')
   const deepEligible = isAdviser ? [] : prospects.filter((p) => deepResearchCanStart(deepState(p)))
   const lastInProgress = useRef(deepRunning)
   // Live state of each job from the server, and the people in the run just started.
@@ -120,10 +124,10 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     })
   }
   // The progress strip: the run just started, or after a reload whoever is still running.
-  const deepStripIds = deepBatch.length > 0 ? deepBatch : prospects.filter((p) => deepResearchInProgress(deepState(p))).map((p) => p.id)
+  const deepStripIds = deepBatch.length > 0 ? deepBatch : everyone.filter((p) => deepResearchInProgress(deepState(p))).map((p) => p.id)
   const deepStrip = deepStripIds
     .map((id) => {
-      const p = prospects.find((x) => x.id === id)
+      const p = everyone.find((x) => x.id === id)
       if (!p) return null
       const fromPage = deepState(p)
       const live = deepLive[id]
@@ -132,7 +136,8 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
       return { id, name: cleanPersonName(p.name), status, inProgress, stage: live?.stage || fromPage?.stage || 'Waiting to start', error: fromPage?.error }
     })
     .filter((x): x is NonNullable<typeof x> => !!x)
-  const deepStripDone = deepStrip.filter((x) => x.status === 'done').length
+  const deepStripDone = deepStrip.filter((x) => x.status === 'done' || x.status === 'checked').length
+  const stripIsRegisters = deepKind === 'registers' || deepStrip.every((x) => x.status === 'checking' || x.status === 'checked')
   const deepStripFailed = deepStrip.filter((x) => x.status === 'failed').length
   const deepStripFinished = deepStrip.filter((x) => !x.inProgress).length
 
@@ -161,19 +166,20 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
     return () => clearInterval(timer)
   }, [deepRunning, campaign.id, router])
 
-  async function startDeepResearch(ids: string[], mode: 'research' | 'messages' = 'research') {
+  async function startDeepResearch(ids: string[], mode: 'research' | 'messages' | 'registers' = 'research') {
     if (ids.length === 0 || deepStarting) return
     setDeepStarting(true)
     let started = 0
     let lastReason = ''
     const startedIds: string[] = []
     try {
-      // Five at a time, so each request stays short.
-      for (let i = 0; i < ids.length; i += 5) {
+      // Deep research five at a time, so each request stays short. The register check takes the list in one go.
+      const size = mode === 'registers' ? 100 : 5
+      for (let i = 0; i < ids.length; i += size) {
         const res = await fetch('/api/prospects/deep-research', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campaign_id: campaign.id, prospect_ids: ids.slice(i, i + 5), mode }),
+          body: JSON.stringify({ campaign_id: campaign.id, prospect_ids: ids.slice(i, i + size), mode }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
@@ -187,12 +193,15 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
       }
       if (started > 0) {
         toast.success(
-          mode === 'messages'
+          mode === 'registers'
+            ? `Checking Companies House and the FCA Register for ${started} ${started === 1 ? 'person' : 'people'}. A few seconds each.`
+            : mode === 'messages'
             ? 'Rewriting the messages from the saved findings. About 20 seconds.'
             : `Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`
         )
         setDeepPicked(new Set())
         setDeepBatch(startedIds)
+        setDeepKind(mode)
         setDeepLive({})
         router.refresh()
       } else {
@@ -742,6 +751,11 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                       <p className="text-brand-beige text-[10px] truncate">
                         {p.role}{p.company ? ` at ${p.company}` : ''}
                       </p>
+                      {!isAdviser && (
+                        <span className="flex items-center gap-1 mt-1 flex-wrap">
+                          <DeepResearchChips prospect={p} showProvisional={false} />
+                        </span>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -835,6 +849,16 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             >
               Export PDF
             </button>
+            {registerEligible.length > 0 && (
+              <button
+                onClick={() => startDeepResearch(registerEligible.map((p) => p.id), 'registers')}
+                disabled={deepStarting}
+                title="A quick, free check of Companies House and the FCA Register for everyone not yet checked: who the directors are, who owns the firm, and whether it is directly authorised. Use it to choose who is worth deep research."
+                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors disabled:opacity-60"
+              >
+                {deepStarting ? 'Starting...' : `Check registers (${registerEligible.length})`}
+              </button>
+            )}
             {(deepEligible.length > 0 || deepRunning > 0) && (
               <button
                 onClick={() => startDeepResearch(deepTargetIds)}
@@ -859,7 +883,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
           <div className="p-3 border-b border-brand-charcoal bg-brand-charcoal-deep/60">
             <div className="flex items-center justify-between gap-2 mb-2">
               <p className="text-brand-cream text-xs font-semibold">
-                Deep research: {deepStripFinished} of {deepStrip.length} finished
+                {stripIsRegisters ? 'Register check' : 'Deep research'}: {deepStripFinished} of {deepStrip.length} finished
                 {deepStripFailed > 0 && <span className="text-red-300 font-normal"> ({deepStripFailed} failed)</span>}
               </p>
               {deepStripFinished === deepStrip.length && (
@@ -880,8 +904,8 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   <span className="text-brand-cream">{x.name}: </span>
                   {x.inProgress ? (
                     <span className="text-brand-rose-gold animate-pulse">{x.stage}</span>
-                  ) : x.status === 'done' ? (
-                    <span className="text-green-400">done</span>
+                  ) : x.status === 'done' || x.status === 'checked' ? (
+                    <span className="text-green-400">{x.status === 'checked' ? 'checked' : 'done'}</span>
                   ) : (
                     <span className="text-red-300">did not finish{x.error ? `: ${x.error}` : ''}</span>
                   )}
@@ -890,10 +914,14 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               {deepStrip.length > 6 && <li className="text-[11px] text-brand-beige">and {deepStrip.length - 6} more</li>}
             </ul>
             {deepStripFinished < deepStrip.length && (
-              <p className="text-brand-beige text-[10px] mt-2">About a minute each. You can carry on using the page.</p>
+              <p className="text-brand-beige text-[10px] mt-2">{stripIsRegisters ? 'A few seconds each.' : 'About a minute each.'} You can carry on using the page.</p>
             )}
             {deepStripFinished === deepStrip.length && deepStripDone > 0 && (
-              <p className="text-brand-beige text-[10px] mt-2">Open a person and click Research Notes to see what was found.</p>
+              <p className="text-brand-beige text-[10px] mt-2">
+                {stripIsRegisters
+                  ? 'Each card now shows who decides and the FCA status. Tick the ones worth deep research.'
+                  : 'Open a person and click Research Notes to see what was found.'}
+              </p>
             )}
           </div>
         )}
@@ -1268,7 +1296,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                     />
                   ))}
 
-                {!isAdviser && deepState(selected)?.status === 'done' && !deepResearchInProgress(deepState(selected)) && (
+                {!isAdviser && deepState(selected)?.status === 'done' && !researchRunning(selected) && (
                   <div className="flex items-center justify-between gap-3 mb-4">
                     <p className="text-brand-beige text-xs">Written from the deep research findings.</p>
                     <button
@@ -1282,7 +1310,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   </div>
                 )}
 
-                {!isAdviser && deepResearchInProgress(deepState(selected)) && (
+                {!isAdviser && researchRunning(selected) && (
                   <div className="rounded-xl border border-brand-rose-gold/30 p-5 text-center mb-4">
                     <p className="text-brand-cream text-sm">Deep research is running for {selectedName}.</p>
                     <p className="text-brand-beige text-xs mt-1">
@@ -1293,7 +1321,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
 
                 {!isAdviser &&
                   selected.status === 'completed' &&
-                  !deepResearchInProgress(deepState(selected)) &&
+                  !researchRunning(selected) &&
                   !selected.outreach?.step1 &&
                   !selected.outreach?.step2 &&
                   !selected.outreach?.step3 && (

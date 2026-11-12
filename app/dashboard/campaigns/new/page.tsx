@@ -15,6 +15,7 @@ import {
 import { cleanPersonName, hasSurname, SURNAME_MISSING_NOTE } from '@/lib/names'
 import type { CampaignSource } from '@/types'
 import { writeOutreachForResults, outreachFailedNote } from '@/lib/outreach-client'
+import { RegisterTags } from '../[id]/deep-research-panel'
 
 interface FoundProspect {
   name: string
@@ -61,6 +62,13 @@ export default function CampaignsPage() {
 
   const [step, setStep] = useState<Step>('create')
   const [campaignId, setCampaignId] = useState<string | null>(null)
+  // v82: the quick register check. Runs on everyone a search finds, and the
+  // Review list shows who decides and the FCA status before anything is researched.
+  type RegisterTag = { verdict: string | null; fca: string | null; in_progress: boolean }
+  const [registerTags, setRegisterTags] = useState<Record<string, RegisterTag>>({})
+  const [registerPolls, setRegisterPolls] = useState(0)
+  const registerKey = (name: string, company: string | null | undefined) => `${name}|${company || ''}`.toLowerCase()
+  const registerChecking = Object.values(registerTags).some((t) => t.in_progress)
   const [loading, setLoading] = useState(false)
 
   // Campaign form
@@ -422,12 +430,25 @@ export default function CampaignsPage() {
             }))
 
           if (newProspects.length > 0) {
-            await supabase.from('prospects').insert(newProspects)
+            const { data: inserted } = await supabase.from('prospects').insert(newProspects).select('id')
+            // v82: check the registers for everyone found, in the background. Never holds up the search.
+            const ids = (inserted || []).map((r) => r.id as string).slice(0, 100)
+            if (ids.length > 0) {
+              fetch('/api/prospects/deep-research', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ campaign_id: campaignId, prospect_ids: ids, mode: 'registers' }),
+              })
+                .then(() => setRegisterPolls(1))
+                .catch(() => {})
+            }
           }
         }
       }
 
       setStep('review')
+      // Start asking for register tags, including for people found on an earlier run.
+      setRegisterPolls((n) => n || 1)
 
       if (planNote && allProspects.length === 0) {
         toast.error(planNote, { duration: 10000 })
@@ -652,6 +673,35 @@ export default function CampaignsPage() {
     updated[i] = { ...updated[i], selected: !updated[i].selected }
     setFoundProspects(updated)
   }
+
+  // v82: untick everyone whose register check matches (boards, appointed reps).
+  function untickWhere(match: (t: RegisterTag) => boolean) {
+    setFoundProspects(foundProspects.map((p) => {
+      const tag = registerTags[registerKey(p.name, p.company)]
+      return tag && match(tag) ? { ...p, selected: false } : p
+    }))
+  }
+
+  // v82: while on the Review step, ask how the register check is getting on
+  // every four seconds, until it has finished (or three minutes have passed).
+  useEffect(() => {
+    if (step !== 'review' || !campaignId || registerPolls === 0 || registerPolls > 45) return
+    if (registerPolls > 1 && Object.keys(registerTags).length > 0 && !registerChecking) return
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/prospects/deep-research?campaign_id=${campaignId}`, { cache: 'no-store' })
+        if (res.ok) {
+          const data = await res.json()
+          const tags: Record<string, RegisterTag> = {}
+          for (const st of data.states || []) tags[registerKey(st.name, st.company)] = { verdict: st.verdict, fca: st.fca, in_progress: st.in_progress }
+          setRegisterTags(tags)
+        }
+      } catch {}
+      setRegisterPolls((n) => n + 1)
+    }, registerPolls === 1 ? 1500 : 4000)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, campaignId, registerPolls])
 
   function selectAll() {
     setFoundProspects(foundProspects.map((p) => ({ ...p, selected: true })))
@@ -1166,6 +1216,22 @@ export default function CampaignsPage() {
               <button onClick={selectAll} className="text-brand-rose-gold text-sm hover:underline">Select all</button>
               <span className="text-brand-charcoal">|</span>
               <button onClick={deselectAll} className="text-brand-beige text-sm hover:underline">Deselect all</button>
+              {Object.values(registerTags).some((t) => t.verdict === 'board' || t.verdict === 'group' || t.verdict === 'not_director') && (
+                <>
+                  <span className="text-brand-charcoal">|</span>
+                  <button onClick={() => untickWhere((t) => t.verdict === 'board' || t.verdict === 'group' || t.verdict === 'not_director')} className="text-brand-beige text-sm hover:underline">
+                    Untick boards and groups
+                  </button>
+                </>
+              )}
+              {Object.values(registerTags).some((t) => t.fca === 'Appointed rep') && (
+                <>
+                  <span className="text-brand-charcoal">|</span>
+                  <button onClick={() => untickWhere((t) => t.fca === 'Appointed rep')} className="text-brand-beige text-sm hover:underline">
+                    Untick appointed reps
+                  </button>
+                </>
+              )}
               <span className="text-brand-beige text-sm ml-2">
                 {selectedCount} of {foundProspects.length} selected
               </span>
@@ -1210,6 +1276,11 @@ export default function CampaignsPage() {
                         <span className="text-[10px] bg-blue-900/40 text-blue-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">
                           CH Verified
                         </span>
+                      )}
+                      {registerTags[registerKey(p.name, p.company)]?.in_progress ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-rose-gold/20 text-brand-rose-gold animate-pulse flex-shrink-0">Checking registers</span>
+                      ) : (
+                        <RegisterTags size="md" verdict={registerTags[registerKey(p.name, p.company)]?.verdict} fca={registerTags[registerKey(p.name, p.company)]?.fca} />
                       )}
                       {p.firmFRN && (
                         <span className="text-[10px] bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded font-medium flex-shrink-0">

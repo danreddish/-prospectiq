@@ -28,6 +28,39 @@ export function verifyProspectSignature(prospectId: string, signature: string): 
   }
 }
 
+/** Signature for a register-check batch: the ids, in the order sent. */
+export function signBatch(prospectIds: string[]): string {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!key) throw new Error('Deep research is not configured')
+  return createHmac('sha256', key).update(`register-check:${prospectIds.join(',')}`).digest('hex')
+}
+
+export function verifyBatchSignature(prospectIds: string[], signature: string): boolean {
+  try {
+    const expected = Buffer.from(signBatch(prospectIds), 'hex')
+    const given = Buffer.from(signature, 'hex')
+    return expected.length === given.length && timingSafeEqual(expected, given)
+  } catch {
+    return false
+  }
+}
+
+/** Ask Netlify to run the register check on a list. Returns false if the request did not land. */
+export async function triggerRegisterCheck(origin: string, prospectIds: string[]): Promise<boolean> {
+  try {
+    const res = await fetch(`${origin}${DEEP_RESEARCH_FUNCTION_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'registers', prospect_ids: prospectIds, signature: signBatch(prospectIds) }),
+      signal: AbortSignal.timeout(2500),
+    })
+    return res.status === 202 || res.ok
+  } catch (err) {
+    console.error('[RegisterCheck] Trigger failed:', err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
 /**
  * Ask Netlify to run the job. A background function answers 202 straight
  * away and carries on by itself. Returns false if the request did not land.

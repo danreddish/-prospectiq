@@ -263,3 +263,53 @@ export async function rewriteMessages(prospectId: string): Promise<{ ok: boolean
     return { ok: false, error: message }
   }
 }
+
+/**
+ * v82: the quick register check for a list of people. Companies House and
+ * the FCA Register only: who the directors are, who owns the firm, whether it
+ * is directly authorised. No Claude, no Apollo, so it costs nothing and can
+ * run on everyone straight after a search, before any deep research.
+ *
+ * Three at a time, to stay inside the registers' rate limits. A person is
+ * only written to if they are still marked 'checking', so a deep research
+ * run started in the meantime is never overwritten.
+ */
+export async function runRegisterCheck(prospectIds: string[]): Promise<{ ok: boolean; checked: number }> {
+  const admin = adminClient()
+  const { data: rows } = await admin
+    .from('prospects')
+    .select('id, name, role, company, location, linkedin_url, headline, company_number, deep_research')
+    .in('id', prospectIds)
+  const todo = (rows || []).filter((r) => (r.deep_research as DeepResearchState | null)?.status === 'checking')
+  let checked = 0
+  const worker = async () => {
+    for (;;) {
+      const row = todo.shift()
+      if (!row) return
+      const previous = row.deep_research as DeepResearchState
+      let next: DeepResearchState
+      let companyNumber: string | null = null
+      try {
+        const evidence = await gatherEvidence(
+          { name: row.name, role: row.role, company: row.company, location: row.location, linkedin_url: row.linkedin_url, headline: row.headline, company_number: row.company_number },
+          { registersOnly: true }
+        )
+        companyNumber = evidence.companies_house?.company_number || null
+        next = { status: 'checked', queued_at: previous.queued_at, checked_at: new Date().toISOString(), evidence, first_pass: previous.first_pass, attempts: previous.attempts }
+      } catch (err) {
+        // A failed check is not a failed research: put the person back to untouched.
+        console.error(`[RegisterCheck] ${row.name}:`, err instanceof Error ? err.message : err)
+        next = { status: 'checked', queued_at: previous.queued_at, checked_at: new Date().toISOString(), first_pass: previous.first_pass, attempts: previous.attempts }
+      }
+      const { error } = await admin
+        .from('prospects')
+        .update({ deep_research: next, ...(companyNumber && !row.company_number ? { company_number: companyNumber } : {}) })
+        .eq('id', row.id)
+        .eq('deep_research->>status', 'checking')
+      if (!error) checked++
+    }
+  }
+  await Promise.all([worker(), worker(), worker()])
+  console.log(`[RegisterCheck] Checked ${checked} of ${prospectIds.length}`)
+  return { ok: true, checked }
+}
