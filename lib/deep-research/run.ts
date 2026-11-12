@@ -18,7 +18,7 @@ import { DEEP_RESEARCH_STAGES, type DeepResearchState } from './state'
 /** An API error as one readable sentence, without the raw JSON. */
 function plainError(message: string): string {
   const inner = message.match(/"message"\s*:\s*"([^"]+)"/)
-  return (inner ? inner[1] : message).replace(/`/g, '').slice(0, 200)
+  return (inner ? inner[1] : message).replace(/`/g, '').slice(0, 260)
 }
 
 function adminClient(): SupabaseClient {
@@ -115,8 +115,9 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
     await stage(2)
     let outreach: unknown = undefined
     let outreachError = ''
-    try {
-      outreach = await writeOutreachSequence(
+    // Two goes: the model now and then answers in a shape that cannot be read.
+    const writeMessages = () =>
+      writeOutreachSequence(
         {
           name: prospect.name,
           role: prospect.role || undefined,
@@ -140,6 +141,13 @@ export async function runDeepResearch(prospectId: string): Promise<{ ok: boolean
         },
         { model: analysis.model, timeoutMs: 60000, maxRetries: 2 }
       )
+    try {
+      try {
+        outreach = await writeMessages()
+      } catch (first) {
+        console.warn('[DeepResearch] Outreach first try failed, trying once more:', first instanceof Error ? first.message : first)
+        outreach = await writeMessages()
+      }
     } catch (err) {
       outreachError = plainError(err instanceof Error ? err.message : 'Could not write the messages')
       console.error('[DeepResearch] Outreach failed, research kept:', outreachError)

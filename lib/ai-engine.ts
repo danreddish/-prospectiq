@@ -313,6 +313,32 @@ const messageRules = (verified: boolean) => `RULES FOR EVERY MESSAGE:
 - No words in capitals for emphasis.
 - The length limits are hard limits. Shorter is better.`
 
+/**
+ * The three steps out of whatever shape the model answered in. The stronger
+ * model sometimes wraps them ({"outreach": {...}}), capitalises the keys, or
+ * gives each step as a plain string.
+ */
+function outreachSteps(parsed: Record<string, unknown>): Record<string, { message?: string; personalization?: string } | undefined> {
+  const lower = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k.toLowerCase().replace(/[\s_]/g, ''), v]))
+  let source = lower(parsed)
+  if (!source.step1) {
+    // One level of wrapping.
+    const inner = Object.values(source).find((v) => v && typeof v === 'object' && !Array.isArray(v) && 'step1' in lower(v as Record<string, unknown>))
+    if (inner) source = lower(inner as Record<string, unknown>)
+  }
+  const out: Record<string, { message?: string; personalization?: string } | undefined> = {}
+  for (const key of ['step1', 'step2', 'step3']) {
+    const v = source[key]
+    if (typeof v === 'string') out[key] = { message: v }
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      const message = [o.message, o.text, o.body, o.content].find((x) => typeof x === 'string') as string | undefined
+      out[key] = { message, personalization: typeof o.personalization === 'string' ? o.personalization : undefined }
+    }
+  }
+  return out
+}
+
 const OUTREACH_STEPS = [
   { key: 'step1', title: 'Connection Request', timing: 'Day 0', charLimit: 280 },
   { key: 'step2', title: 'Welcome Message', timing: '24hrs later', charLimit: 600 },
@@ -343,6 +369,7 @@ export async function writeOutreachSequence(
       // has time, and the stronger model was cut off mid-answer at 900.
       max_tokens: opts.model ? 3000 : 900,
       system: `Write LinkedIn outreach for a financial services professional. Return JSON only.
+Always write all three messages, whatever the research says about fit. The sender decides who to send to.
 Sender: ${context.senderName} | Niche: ${context.niche}${serviceCtx}${customBlock}
 
 OUTREACH from ${context.senderName} to prospect. Write a LINK Method sequence that EARNS a conversation. It does not chase a call. These are senior, wealthy, heavily-pitched people: a stranger asking for 15 minutes reads as a sales script and gets ignored. The sequence must feel like a credible peer reaching out, not a funnel.${serviceCtx ? ' Reference the sender\'s specific SERVICE and OUTCOMES in step 2 and 3, not generic wealth management language.' : ''}
@@ -377,15 +404,14 @@ Return this exact JSON structure:
   }
   logClaudeCall('outreach', startedAt, response)
 
-  const raw = parseJsonObject<Record<string, { message?: string; personalization?: string } | undefined>>(
-    responseText(response),
-    'outreach'
-  )
+  const text = responseText(response)
+  const raw = outreachSteps(parseJsonObject<Record<string, unknown>>(text, 'outreach'))
 
   const sequence: OutreachSequence = {}
   for (const step of OUTREACH_STEPS) {
     const message = removeDashes((raw[step.key]?.message || '').trim())
-    if (!message) throw new Error(`AI outreach response is missing ${step.key}`)
+    // Say what did come back, so a refusal or an odd shape can be seen.
+    if (!message) throw new Error(`AI outreach response is missing ${step.key}. It said: ${text.replace(/\s+/g, ' ').slice(0, 160)}`)
     // v81: every step is held to its limit, cut back to whole sentences.
     // LinkedIn rejects a connection note over 280 characters.
     const finalMessage = fitToLimit(message, step.charLimit)
