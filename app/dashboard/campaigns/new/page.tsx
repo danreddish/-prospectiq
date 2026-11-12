@@ -1133,7 +1133,8 @@ export default function CampaignsPage() {
           </p>
 
           {/* Debug log — temporary */}
-          {debugLog.length > 0 && (
+          {/* Search log: hidden unless the address ends ?debug=1 (for troubleshooting a search) */}
+          {searchParams.get('debug') === '1' && debugLog.length > 0 && (
             <div className="mb-6 rounded-lg border border-yellow-600/30 bg-yellow-900/10 p-4 max-h-48 overflow-y-auto">
               <p className="text-yellow-500 text-xs font-bold mb-2 uppercase tracking-wide">Search Debug Log</p>
               {debugLog.map((line, i) => (

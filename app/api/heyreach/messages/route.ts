@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { voiceSampleFrom } from '@/lib/voice'
+import { deepResearchInProgress, researchContext } from '@/lib/deep-research/state'
 import { z } from 'zod'
 import { writeHeyReachMessages } from '@/lib/ai-engine'
 import { canonicalProfileUrl } from '@/lib/linkedin'
@@ -41,6 +43,10 @@ export async function POST(req: NextRequest) {
   if (prospect.status !== 'completed') {
     return NextResponse.json({ error: 'Research this prospect first.' }, { status: 409 })
   }
+  // v81: messages written mid-research would use the first-pass guesses.
+  if (deepResearchInProgress(prospect.deep_research)) {
+    return NextResponse.json({ error: 'Deep research is still running for this person. Try again in a minute.' }, { status: 409 })
+  }
   const profileUrl = canonicalProfileUrl(prospect.linkedin_url)
   if (!profileUrl) {
     return NextResponse.json({ error: 'No exact LinkedIn profile for this prospect, so HeyReach cannot use them.' }, { status: 409 })
@@ -72,13 +78,15 @@ export async function POST(req: NextRequest) {
         role: prospect.role || undefined,
         company: prospect.company || undefined,
         location: prospect.location || undefined,
+        headline: prospect.headline || null,
       },
-      { research_notes: prospect.research_notes, key_trigger: prospect.key_trigger },
+      researchContext(prospect.research_notes, prospect.key_trigger, prospect.deep_research),
       {
         niche: campaign.niche || profile?.niche || 'Wealth management',
         senderName: campaign.sender_name || profile?.sender_name || 'Financial Advisor',
         serviceProfile: mergedServiceProfile(campaign, profile),
         customInstructions: campaign.custom_instructions || null,
+        voiceSample: voiceSampleFrom(profile?.service_profile),
       },
       part,
       part === 2 ? { msg_1: state.msgs?.msg_1, msg_2: state.msgs?.msg_2 } : null,

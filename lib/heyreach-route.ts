@@ -2,6 +2,7 @@
 // v79 the sending routes also serve users with a HeyReach campaign assigned.
 
 import { createHash } from 'crypto'
+import type { DeepResearchState } from '@/lib/deep-research/state'
 import { NextResponse } from 'next/server'
 import type { User } from '@supabase/supabase-js'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
@@ -81,12 +82,15 @@ export interface TestProspect {
   role: string | null
   company: string | null
   location: string | null
+  headline: string | null
   linkedin_url: string | null
   status: string
   research_notes: string | null
   key_trigger: string | null
   total_score: number | null
   heyreach: HeyReachState | null
+  /** v81: deep research state and findings */
+  deep_research: DeepResearchState | null
 }
 
 export interface TestCampaign {
@@ -111,7 +115,7 @@ export async function loadTestProspect(
   const [prospectRes, campaignRes, profileRes] = await Promise.all([
     supabase
       .from('prospects')
-      .select('id, campaign_id, name, role, company, location, linkedin_url, status, research_notes, key_trigger, total_score, heyreach')
+      .select('id, campaign_id, name, role, company, location, headline, linkedin_url, status, research_notes, key_trigger, total_score, heyreach')
       .eq('id', prospectId)
       .eq('user_id', userId)
       .maybeSingle(),
@@ -125,6 +129,11 @@ export async function loadTestProspect(
   ])
   const prospect = prospectRes.data as TestProspect | null
   const campaign = campaignRes.data as TestCampaign | null
+  // v81: read on its own, so this still works before migration 012 adds the column.
+  if (prospect) {
+    const deepRes = await supabase.from('prospects').select('deep_research').eq('id', prospectId).maybeSingle()
+    prospect.deep_research = ((deepRes.data as { deep_research?: unknown } | null)?.deep_research || null) as DeepResearchState | null
+  }
   // Recruitment (adviser) campaigns are not part of the HeyReach test.
   if (!prospect || !campaign || prospect.campaign_id !== campaign.id || campaign.purpose === 'advisers') {
     return { response: NextResponse.json({ error: 'Prospect not found' }, { status: 404 }) }

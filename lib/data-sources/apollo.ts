@@ -6,8 +6,10 @@
  * Free tier: 10,000 credits/year.
  */
 
-import { normaliseLinkedInUrl } from '@/lib/linkedin'
-import { cleanPersonName } from '@/lib/names'
+// Relative imports: the deep research background function bundles this file,
+// and Netlify's function bundler does not read the "@/" alias.
+import { normaliseLinkedInUrl } from '../linkedin'
+import { cleanPersonName } from '../names'
 
 const APOLLO_BASE = 'https://api.apollo.io/v1'
 

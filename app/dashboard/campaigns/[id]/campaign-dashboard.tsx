@@ -1,6 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import DeepResearchPanel, { DeepResearchChips, deepState } from './deep-research-panel'
+import { deepResearchCanStart, deepResearchInProgress } from '@/lib/deep-research/state'
 import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption, ADVISER_SCORE_LABELS, AdviserFcaData } from '@/types'
 import { toast } from 'sonner'
 import {
@@ -86,10 +89,121 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   const [tierFilter, setTierFilter] = useState<'all' | 'A' | 'B' | 'C'>('all')
   const [copiedStep, setCopiedStep] = useState<number | null>(null)
   const [writingOutreach, setWritingOutreach] = useState(false) // v76.2
-  const [showPending, setShowPending] = useState(false)
+  // Open from the start when nobody has been researched yet: it is all there is to show.
+  const [showPending, setShowPending] = useState(prospects.length === 0)
   const [pendingSelected, setPendingSelected] = useState<Set<string>>(new Set())
   const [researching, setResearching] = useState(false)
   const [researchProgress, setResearchProgress] = useState({ completed: 0, total: 0 })
+
+  // ── v81: deep research ──────────────────────
+  // The background job re-scores each person and rewrites their notes and
+  // outreach. While any are running, ask every 10 seconds how they are
+  // getting on, and refresh the page's data whenever one finishes.
+  const router = useRouter()
+  const [deepStarting, setDeepStarting] = useState(false)
+  const deepRunning = prospects.filter((p) => deepResearchInProgress(deepState(p))).length
+  const deepEligible = isAdviser ? [] : prospects.filter((p) => deepResearchCanStart(deepState(p)))
+  const lastInProgress = useRef(deepRunning)
+  // Live state of each job from the server, and the people in the run just started.
+  const [deepLive, setDeepLive] = useState<Record<string, { status: string; in_progress: boolean; stage: string | null }>>({})
+  const [deepBatch, setDeepBatch] = useState<string[]>([])
+  // Tick boxes on the cards: run deep research on just these. None ticked = everyone eligible.
+  const [deepPicked, setDeepPicked] = useState<Set<string>>(new Set())
+  const deepPickedIds = deepEligible.filter((p) => deepPicked.has(p.id)).map((p) => p.id)
+  const deepTargetIds = deepPickedIds.length > 0 ? deepPickedIds : deepEligible.map((p) => p.id)
+  function toggleDeepPick(id: string) {
+    setDeepPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  // The progress strip: the run just started, or after a reload whoever is still running.
+  const deepStripIds = deepBatch.length > 0 ? deepBatch : prospects.filter((p) => deepResearchInProgress(deepState(p))).map((p) => p.id)
+  const deepStrip = deepStripIds
+    .map((id) => {
+      const p = prospects.find((x) => x.id === id)
+      if (!p) return null
+      const fromPage = deepState(p)
+      const live = deepLive[id]
+      const status = live?.status || fromPage?.status || 'queued'
+      const inProgress = live ? live.in_progress : deepResearchInProgress(fromPage)
+      return { id, name: cleanPersonName(p.name), status, inProgress, stage: live?.stage || fromPage?.stage || 'Waiting to start', error: fromPage?.error }
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
+  const deepStripDone = deepStrip.filter((x) => x.status === 'done').length
+  const deepStripFailed = deepStrip.filter((x) => x.status === 'failed').length
+  const deepStripFinished = deepStrip.filter((x) => !x.inProgress).length
+
+  useEffect(() => {
+    // Fresh data from the server: keep showing the same person, with their new details.
+    setSelected((prev) => (prev ? prospects.find((p) => p.id === prev.id) || prev : prev))
+  }, [prospects])
+
+  useEffect(() => {
+    if (deepRunning === 0) return
+    lastInProgress.current = deepRunning
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/prospects/deep-research?campaign_id=${campaign.id}`, { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json()
+        const live: Record<string, { status: string; in_progress: boolean; stage: string | null }> = {}
+        for (const st of data.states || []) live[st.id] = { status: st.status, in_progress: st.in_progress, stage: st.stage }
+        setDeepLive(live)
+        if (typeof data.in_progress === 'number' && data.in_progress < lastInProgress.current) {
+          lastInProgress.current = data.in_progress
+          router.refresh()
+        }
+      } catch {}
+    }, 4000)
+    return () => clearInterval(timer)
+  }, [deepRunning, campaign.id, router])
+
+  async function startDeepResearch(ids: string[], mode: 'research' | 'messages' = 'research') {
+    if (ids.length === 0 || deepStarting) return
+    setDeepStarting(true)
+    let started = 0
+    let lastReason = ''
+    const startedIds: string[] = []
+    try {
+      // Five at a time, so each request stays short.
+      for (let i = 0; i < ids.length; i += 5) {
+        const res = await fetch('/api/prospects/deep-research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campaign_id: campaign.id, prospect_ids: ids.slice(i, i + 5), mode }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          lastReason = data.error || 'Could not start deep research'
+          break
+        }
+        started += data.started || 0
+        for (const r of data.results || []) if (r.started) startedIds.push(r.id)
+        const refused = (data.results || []).find((r: { started: boolean; reason?: string }) => !r.started)
+        if (refused?.reason) lastReason = refused.reason
+      }
+      if (started > 0) {
+        toast.success(
+          mode === 'messages'
+            ? 'Rewriting the messages from the saved findings. About 20 seconds.'
+            : `Deep research started for ${started} ${started === 1 ? 'person' : 'people'}. Each takes about a minute.`
+        )
+        setDeepPicked(new Set())
+        setDeepBatch(startedIds)
+        setDeepLive({})
+        router.refresh()
+      } else {
+        toast.error(lastReason || 'Could not start deep research')
+      }
+    } catch {
+      toast.error('Could not start deep research')
+    } finally {
+      setDeepStarting(false)
+    }
+  }
 
   // Reply Coach state
   const [replyInput, setReplyInput] = useState('')
@@ -568,160 +682,9 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
     toast.success('PDF report opened — use Print > Save as PDF')
   }
 
-  if (prospects.length === 0) {
-    return (
-      <div className="text-center py-20">
-        <h2 className="text-brand-cream text-xl font-display mb-2">{campaign.name}</h2>
-        <p className="text-brand-beige mb-6">
-          {isAdviser ? 'No researched advisers yet. Find advisers and run research.' : 'No completed prospects yet. Add prospects and run research.'}
-        </p>
-        <a href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : '/dashboard/campaigns/new'} className="btn-primary text-sm">
-          {isAdviser ? 'Find Advisers' : 'Add Prospects'}
-        </a>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex h-[calc(100vh-4rem)] -m-8">
-      {/* Sidebar - Prospect List */}
-      <div className="w-80 border-r border-brand-charcoal bg-brand-charcoal-deeper overflow-y-auto flex-shrink-0">
-        {/* Campaign header */}
-        <div className="p-5 border-b border-brand-charcoal">
-          <p className="text-brand-rose-gold text-[10px] font-bold tracking-[2px] uppercase">
-            {isAdviser ? 'Recruitment' : 'AI Wealth Partners'}
-          </p>
-          <h2 className="text-brand-cream text-lg font-display mt-0.5">{campaign.name}</h2>
-          <p className="text-brand-beige text-xs mt-1">
-            {isAdviser ? 'Adviser recruitment' : (campaign.niche || 'No niche set')} &middot; {prospects.length} {isAdviser ? 'advisers' : 'prospects'}
-          </p>
-          <div className="flex gap-2 mt-3">
-            <a
-              href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : `/dashboard/campaigns/new?campaign=${campaign.id}`}
-              className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
-            >
-              + Find More
-            </a>
-            {showHeyReach && !isAdviser && (
-              <a
-                href={`/dashboard/campaigns/${campaign.id}/heyreach`}
-                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
-              >
-                Send to LinkedIn
-              </a>
-            )}
-            <button
-              onClick={exportCSV}
-              className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors"
-            >
-              Export CSV
-            </button>
-            <button
-              onClick={exportPDF}
-              className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors"
-            >
-              Export PDF
-            </button>
-          </div>
-        </div>
-
-        {/* Tier filter */}
-        <div className="p-3 border-b border-brand-charcoal flex gap-2">
-          {(['all', 'A', 'B', 'C'] as const).map((tier) => (
-            <button
-              key={tier}
-              onClick={() => setTierFilter(tier)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                tierFilter === tier
-                  ? 'bg-brand-rose-gold text-brand-dark'
-                  : 'text-brand-beige border border-brand-charcoal hover:border-brand-rose-gold'
-              }`}
-            >
-              {tier === 'all' ? 'All' : tier}
-              {tier !== 'all' && (
-                <span className="ml-1 opacity-70">({tierCounts[tier]})</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Prospect cards */}
-        <div className="p-2">
-          {filtered.map((prospect) => (
-            <button
-              key={prospect.id}
-              onClick={() => handleSelectProspect(prospect)}
-              className={`w-full text-left p-3 rounded-lg mb-1 transition-colors ${
-                selected?.id === prospect.id
-                  ? 'bg-brand-rose-gold/10 border-l-3 border-brand-rose-gold'
-                  : 'hover:bg-brand-charcoal-deep/50'
-              }`}
-              style={{
-                borderLeft: selected?.id === prospect.id ? '3px solid #c49f8c' : '3px solid transparent'
-              }}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-brand-cream text-sm font-semibold truncate">{cleanPersonName(prospect.name)}</p>
-                  <p className="text-brand-beige text-xs truncate mt-0.5">
-                    {prospect.role}{prospect.company ? `, ${prospect.company}` : ''}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-brand-cream text-xs font-semibold">
-                    {prospect.total_score}/40
-                  </span>
-                  <TierBadge tier={prospect.tier!} />
-                </div>
-              </div>
-              {prospect.key_trigger && (
-                <p className="text-brand-beige text-[11px] mt-1.5 line-clamp-1">
-                  {prospect.key_trigger}
-                </p>
-              )}
-              {/* Contact indicators */}
-              <div className="flex items-center gap-2 mt-1.5">
-                {isLinkedInProfileUrl(prospect.linkedin_url) && (
-                  <a
-                    href={normaliseLinkedInUrl(prospect.linkedin_url) || undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    title="Open LinkedIn profile"
-                    className="text-[9px] px-1.5 py-0.5 rounded bg-[#0A66C2]/20 text-[#0A66C2] hover:bg-[#0A66C2]/30 hover:underline transition-colors"
-                  >
-                    LI
-                  </a>
-                )}
-                {prospect.email && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-rose-gold/20 text-brand-rose-gold">
-                    Email
-                  </span>
-                )}
-                {prospect.phone && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400">
-                    Phone
-                  </span>
-                )}
-                {isAdviser && (
-                  prospect.fca_irn ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400">FCA</span>
-                  ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-charcoal text-brand-beige">Not on register</span>
-                  )
-                )}
-                {isAdviser && (adviserData(prospect)?.risk_flags?.length || 0) > 0 && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">
-                    {adviserData(prospect)!.risk_flags!.length} flag{adviserData(prospect)!.risk_flags!.length === 1 ? '' : 's'}
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Pending prospects (found but not yet researched) */}
-        {pendingProspects.length > 0 && (
+  // Found but not yet researched. Built once so it can show both beside the
+  // researched list and on its own, before anyone has been researched.
+  const pendingPanel = pendingProspects.length > 0 ? (
           <div className="border-t border-brand-charcoal">
             <button
               onClick={() => setShowPending(!showPending)}
@@ -798,7 +761,271 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               </div>
             )}
           </div>
+  ) : null
+
+  if (prospects.length === 0) {
+    const findHref = isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : `/dashboard/campaigns/new?campaign=${campaign.id}`
+    // Found but nobody researched yet: show them here, ready to tick and research.
+    if (pendingPanel) {
+      return (
+        <div className="max-w-xl mx-auto py-12">
+          <h2 className="text-brand-cream text-xl font-display mb-2 text-center">{campaign.name}</h2>
+          <p className="text-brand-beige mb-6 text-center">
+            {pendingProspects.length} {isAdviser ? 'advisers' : 'prospects'} found, none researched yet. Tick the ones you want and click Research.
+          </p>
+          <div className="rounded-lg border border-brand-charcoal bg-brand-charcoal-deeper overflow-hidden">{pendingPanel}</div>
+          <p className="text-center mt-6">
+            <a href={findHref} className="text-brand-rose-gold text-sm hover:underline">
+              {isAdviser ? 'Find more advisers' : 'Find more prospects'}
+            </a>
+          </p>
+        </div>
+      )
+    }
+    return (
+      <div className="text-center py-20">
+        <h2 className="text-brand-cream text-xl font-display mb-2">{campaign.name}</h2>
+        <p className="text-brand-beige mb-6">
+          {isAdviser ? 'No researched advisers yet. Find advisers and run research.' : 'No completed prospects yet. Add prospects and run research.'}
+        </p>
+        <a href={findHref} className="btn-primary text-sm">
+          {isAdviser ? 'Find Advisers' : 'Add Prospects'}
+        </a>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-4rem)] -m-8">
+      {/* Sidebar - Prospect List */}
+      <div className="w-80 border-r border-brand-charcoal bg-brand-charcoal-deeper overflow-y-auto flex-shrink-0">
+        {/* Campaign header */}
+        <div className="p-5 border-b border-brand-charcoal">
+          <p className="text-brand-rose-gold text-[10px] font-bold tracking-[2px] uppercase">
+            {isAdviser ? 'Recruitment' : 'AI Wealth Partners'}
+          </p>
+          <h2 className="text-brand-cream text-lg font-display mt-0.5">{campaign.name}</h2>
+          <p className="text-brand-beige text-xs mt-1">
+            {isAdviser ? 'Adviser recruitment' : (campaign.niche || 'No niche set')} &middot; {prospects.length} {isAdviser ? 'advisers' : 'prospects'}
+          </p>
+          <div className="flex gap-2 mt-3">
+            <a
+              href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : `/dashboard/campaigns/new?campaign=${campaign.id}`}
+              className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
+            >
+              + Find More
+            </a>
+            {showHeyReach && !isAdviser && (
+              <a
+                href={`/dashboard/campaigns/${campaign.id}/heyreach`}
+                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
+              >
+                Send to LinkedIn
+              </a>
+            )}
+            <button
+              onClick={exportCSV}
+              className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors"
+            >
+              Export CSV
+            </button>
+            <button
+              onClick={exportPDF}
+              className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors"
+            >
+              Export PDF
+            </button>
+            {(deepEligible.length > 0 || deepRunning > 0) && (
+              <button
+                onClick={() => startDeepResearch(deepTargetIds)}
+                disabled={deepStarting || deepEligible.length === 0}
+                title="Reads Companies House, the FCA Register, each LinkedIn profile and the firm's website, then re-scores and rewrites the outreach. Tick people in the list to run it on just those."
+                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors disabled:opacity-60"
+              >
+                {deepRunning > 0 && deepEligible.length === 0
+                  ? `Researching ${deepRunning}...`
+                  : deepStarting
+                    ? 'Starting...'
+                    : deepPickedIds.length > 0
+                      ? `Deep research (${deepPickedIds.length} ticked)`
+                      : `Deep research (all ${deepEligible.length})`}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* v81: deep research progress */}
+        {!isAdviser && deepStrip.length > 0 && (
+          <div className="p-3 border-b border-brand-charcoal bg-brand-charcoal-deep/60">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-brand-cream text-xs font-semibold">
+                Deep research: {deepStripFinished} of {deepStrip.length} finished
+                {deepStripFailed > 0 && <span className="text-red-300 font-normal"> ({deepStripFailed} failed)</span>}
+              </p>
+              {deepStripFinished === deepStrip.length && (
+                <button onClick={() => { setDeepBatch([]); setDeepLive({}) }} className="text-[10px] text-brand-beige hover:text-brand-cream">
+                  Hide
+                </button>
+              )}
+            </div>
+            <div className="h-1.5 rounded bg-brand-charcoal overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={deepStrip.length} aria-valuenow={deepStripFinished}>
+              <div
+                className="h-full bg-brand-rose-gold transition-all duration-500"
+                style={{ width: `${Math.round((deepStripFinished / deepStrip.length) * 100)}%` }}
+              />
+            </div>
+            <ul className="mt-2 space-y-1">
+              {deepStrip.slice(0, 6).map((x) => (
+                <li key={x.id} className="text-[11px] leading-snug">
+                  <span className="text-brand-cream">{x.name}: </span>
+                  {x.inProgress ? (
+                    <span className="text-brand-rose-gold animate-pulse">{x.stage}</span>
+                  ) : x.status === 'done' ? (
+                    <span className="text-green-400">done</span>
+                  ) : (
+                    <span className="text-red-300">did not finish{x.error ? `: ${x.error}` : ''}</span>
+                  )}
+                </li>
+              ))}
+              {deepStrip.length > 6 && <li className="text-[11px] text-brand-beige">and {deepStrip.length - 6} more</li>}
+            </ul>
+            {deepStripFinished < deepStrip.length && (
+              <p className="text-brand-beige text-[10px] mt-2">About a minute each. You can carry on using the page.</p>
+            )}
+            {deepStripFinished === deepStrip.length && deepStripDone > 0 && (
+              <p className="text-brand-beige text-[10px] mt-2">Open a person and click Research Notes to see what was found.</p>
+            )}
+          </div>
         )}
+
+        {/* Tier filter */}
+        <div className="p-3 border-b border-brand-charcoal flex gap-2">
+          {(['all', 'A', 'B', 'C'] as const).map((tier) => (
+            <button
+              key={tier}
+              onClick={() => setTierFilter(tier)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                tierFilter === tier
+                  ? 'bg-brand-rose-gold text-brand-dark'
+                  : 'text-brand-beige border border-brand-charcoal hover:border-brand-rose-gold'
+              }`}
+            >
+              {tier === 'all' ? 'All' : tier}
+              {tier !== 'all' && (
+                <span className="ml-1 opacity-70">({tierCounts[tier]})</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Prospect cards */}
+        <div className="p-2">
+          {filtered.map((prospect) => (
+            <button
+              key={prospect.id}
+              onClick={() => handleSelectProspect(prospect)}
+              className={`w-full text-left p-3 rounded-lg mb-1 transition-colors ${
+                selected?.id === prospect.id
+                  ? 'bg-brand-rose-gold/10 border-l-3 border-brand-rose-gold'
+                  : 'hover:bg-brand-charcoal-deep/50'
+              }`}
+              style={{
+                borderLeft: selected?.id === prospect.id ? '3px solid #c49f8c' : '3px solid transparent'
+              }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                {/* v81: tick to include in deep research. A span, because a card is already a button. */}
+                {!isAdviser && deepResearchCanStart(deepState(prospect)) && (
+                  <span
+                    role="checkbox"
+                    aria-checked={deepPicked.has(prospect.id)}
+                    aria-label={`Include ${cleanPersonName(prospect.name)} in deep research`}
+                    title="Tick to include in deep research"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleDeepPick(prospect.id)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        toggleDeepPick(prospect.id)
+                      }
+                    }}
+                    className={`w-4 h-4 rounded border mt-0.5 flex-shrink-0 flex items-center justify-center cursor-pointer ${
+                      deepPicked.has(prospect.id) ? 'bg-brand-rose-gold border-brand-rose-gold' : 'border-brand-beige/50 hover:border-brand-rose-gold'
+                    }`}
+                  >
+                    {deepPicked.has(prospect.id) && (
+                      <svg className="w-3 h-3 text-brand-dark" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-brand-cream text-sm font-semibold truncate">{cleanPersonName(prospect.name)}</p>
+                  <p className="text-brand-beige text-xs truncate mt-0.5">
+                    {prospect.role}{prospect.company ? `, ${prospect.company}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-brand-cream text-xs font-semibold">
+                    {prospect.total_score}/40
+                  </span>
+                  <TierBadge tier={prospect.tier!} />
+                </div>
+              </div>
+              {prospect.key_trigger && (
+                <p className="text-brand-beige text-[11px] mt-1.5 line-clamp-1">
+                  {prospect.key_trigger}
+                </p>
+              )}
+              {/* Contact indicators */}
+              <div className="flex items-center gap-2 mt-1.5">
+                {isLinkedInProfileUrl(prospect.linkedin_url) && (
+                  <a
+                    href={normaliseLinkedInUrl(prospect.linkedin_url) || undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title="Open LinkedIn profile"
+                    className="text-[9px] px-1.5 py-0.5 rounded bg-[#0A66C2]/20 text-[#0A66C2] hover:bg-[#0A66C2]/30 hover:underline transition-colors"
+                  >
+                    LI
+                  </a>
+                )}
+                {prospect.email && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-rose-gold/20 text-brand-rose-gold">
+                    Email
+                  </span>
+                )}
+                {prospect.phone && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400">
+                    Phone
+                  </span>
+                )}
+                {!isAdviser && <DeepResearchChips prospect={prospect} />}
+                {isAdviser && (
+                  prospect.fca_irn ? (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400">FCA</span>
+                  ) : (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-charcoal text-brand-beige">Not on register</span>
+                  )
+                )}
+                {isAdviser && (adviserData(prospect)?.risk_flags?.length || 0) > 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">
+                    {adviserData(prospect)!.risk_flags!.length} flag{adviserData(prospect)!.risk_flags!.length === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Pending prospects (found but not yet researched) */}
+        {pendingPanel}
       </div>
 
       {/* Main Panel */}
@@ -1033,8 +1260,32 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                     />
                   ))}
 
+                {!isAdviser && deepState(selected)?.status === 'done' && !deepResearchInProgress(deepState(selected)) && (
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <p className="text-brand-beige text-xs">Written from the deep research findings.</p>
+                    <button
+                      onClick={() => startDeepResearch([selected.id], 'messages')}
+                      disabled={deepStarting}
+                      title="Writes the three messages again from the saved findings. The research is not repeated."
+                      className="text-[10px] px-2.5 py-1.5 rounded border border-brand-charcoal text-brand-beige hover:border-brand-rose-gold hover:text-brand-cream transition-colors disabled:opacity-60 flex-shrink-0"
+                    >
+                      {deepStarting ? 'Starting...' : 'Rewrite messages'}
+                    </button>
+                  </div>
+                )}
+
+                {!isAdviser && deepResearchInProgress(deepState(selected)) && (
+                  <div className="rounded-xl border border-brand-rose-gold/30 p-5 text-center mb-4">
+                    <p className="text-brand-cream text-sm">Deep research is running for {selectedName}.</p>
+                    <p className="text-brand-beige text-xs mt-1">
+                      The outreach is written from what it finds, in about a minute. This page updates by itself.
+                    </p>
+                  </div>
+                )}
+
                 {!isAdviser &&
                   selected.status === 'completed' &&
+                  !deepResearchInProgress(deepState(selected)) &&
                   !selected.outreach?.step1 &&
                   !selected.outreach?.step2 &&
                   !selected.outreach?.step3 && (
@@ -1227,6 +1478,9 @@ Or: "Interesting, tell me more about how you work with people like me."`}
                 </div>
 
                 {isAdviser && <AdviserResearchPanel prospect={selected} />}
+                {!isAdviser && (
+                  <DeepResearchPanel prospect={selected} running={deepStarting} onRun={() => startDeepResearch([selected.id])} />
+                )}
 
                 {/* Contact Methods */}
                 <div className="mt-6 bg-brand-charcoal-deep rounded-lg p-5 border border-brand-charcoal">
