@@ -30,9 +30,22 @@ export function deepState(p: Prospect): DeepResearchState | null {
 }
 
 /** The small tags on a prospect card. */
+/** True until deep research has replaced the first-pass guess. */
+export function scoreIsProvisional(prospect: Prospect): boolean {
+  return deepState(prospect)?.status !== 'done'
+}
+
+export const PROVISIONAL_TITLE = 'A first-pass guess from their name, role and company only. Deep research replaces it.'
+
 export function DeepResearchChips({ prospect }: { prospect: Prospect }) {
   const state = deepState(prospect)
-  if (!state) return null
+  if (!state) {
+    return (
+      <span title={PROVISIONAL_TITLE} className="text-[9px] px-1.5 py-0.5 rounded border border-brand-beige/40 text-brand-beige">
+        Provisional score
+      </span>
+    )
+  }
   if (deepResearchInProgress(state)) {
     return <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-rose-gold/20 text-brand-rose-gold animate-pulse">Researching</span>
   }

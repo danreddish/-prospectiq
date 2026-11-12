@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import DeepResearchPanel, { DeepResearchChips, deepState } from './deep-research-panel'
+import DeepResearchPanel, { DeepResearchChips, PROVISIONAL_TITLE, deepState, scoreIsProvisional } from './deep-research-panel'
 import { deepResearchCanStart, deepResearchInProgress } from '@/lib/deep-research/state'
 import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption, ADVISER_SCORE_LABELS, AdviserFcaData } from '@/types'
 import { toast } from 'sonner'
@@ -971,7 +971,10 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-brand-cream text-xs font-semibold">
+                  <span
+                    title={!isAdviser && scoreIsProvisional(prospect) ? PROVISIONAL_TITLE : undefined}
+                    className={`text-xs font-semibold ${!isAdviser && scoreIsProvisional(prospect) ? 'text-brand-beige' : 'text-brand-cream'}`}
+                  >
                     {prospect.total_score}/40
                   </span>
                   <TierBadge tier={prospect.tier!} />
@@ -1102,7 +1105,12 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                 )}
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-brand-cream text-lg font-display">
+                {!isAdviser && scoreIsProvisional(selected) && (
+                  <span title={PROVISIONAL_TITLE} className="text-[10px] px-2 py-1 rounded border border-brand-beige/40 text-brand-beige">
+                    Provisional
+                  </span>
+                )}
+                <span className={`text-lg font-display ${!isAdviser && scoreIsProvisional(selected) ? 'text-brand-beige' : 'text-brand-cream'}`}>
                   {selected.total_score}/40
                 </span>
                 <TierBadge tier={selected.tier!} />
