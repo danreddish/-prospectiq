@@ -83,6 +83,7 @@ html[data-motion=off] .rise.pending{opacity:1;transform:none;filter:none}
 .hero-copy>*{opacity:0;animation:piqFade .8s var(--ease-out) forwards}
 .hero-copy>:nth-child(1){animation-delay:.1s}.hero-copy>:nth-child(2){animation-delay:.3s}.hero-copy>:nth-child(3){animation-delay:.45s}
 .hero-copy>:nth-child(4){animation-delay:.6s}.hero-copy>:nth-child(5){animation-delay:.75s}.hero-copy>:nth-child(6){animation-delay:.9s}.hero-copy>:nth-child(7){animation-delay:1.05s}
+.hero-copy>:nth-child(8){animation-delay:1.2s}
 @keyframes piqFade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.hero-copy>*{animation:none;opacity:1}}
 .lockup{display:flex;align-items:center;gap:22px;margin-bottom:34px}
@@ -107,6 +108,8 @@ html[data-motion=off] .rise.pending{opacity:1;transform:none;filter:none}
 .hero .lede{max-width:46ch;color:var(--mute);font-size:clamp(16px,1.55vw,20px);line-height:1.7;margin-top:26px}
 .ctas{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:40px}
 .hero .ctas .pill{height:56px;padding:0 28px;font-size:17px;font-weight:600}
+.hero-recruit{max-width:52ch;margin-top:24px;color:var(--mute);font-size:14.5px;line-height:1.6}
+.hero-recruit a{color:var(--rose-hi);text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
 .stats{display:flex;gap:clamp(24px,5vw,48px);justify-content:center;flex-wrap:wrap;margin-top:56px}
 .stats div{display:flex;flex-direction:column;align-items:center;gap:8px}
 .stats b{font:400 25px/1 var(--display);color:var(--rose-hi);font-variant-numeric:tabular-nums}
@@ -371,6 +374,7 @@ footer{border-top:1px solid var(--line);padding-block:56px calc(80px + env(safe-
       <a class="pill" href="/auth/signup">Start Free Trial</a>
       <a class="pill ghost" href="#watch">See It In Action</a>
     </div>
+    <p class="hero-recruit">Run a network or a growing firm? Find the advisers worth recruiting before another network does. <a href="#recruitment">See Recruitment</a></p>
     <div class="stats">
       <div><b>270M+</b><span>Verified professionals worldwide</span></div>
       <div><b>200+</b><span>Countries covered</span></div>
