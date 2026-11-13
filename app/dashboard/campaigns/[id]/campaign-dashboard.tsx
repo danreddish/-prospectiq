@@ -825,7 +825,8 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
           <p className="text-brand-beige text-xs mt-1">
             {isAdviser ? 'Adviser recruitment' : (campaign.niche || 'No niche set')} &middot; {prospects.length} {isAdviser ? 'advisers' : 'prospects'}
           </p>
-          <div className="flex gap-2 mt-3">
+          {/* Wraps onto a second line: with Check registers there are six buttons, and the last was pushed out of sight. */}
+          <div className="flex flex-wrap gap-2 mt-3">
             <a
               href={isAdviser ? `/dashboard/recruitment/campaigns?campaign=${campaign.id}` : `/dashboard/campaigns/new?campaign=${campaign.id}`}
               className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors"
