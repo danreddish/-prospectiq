@@ -12,17 +12,18 @@
     "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhook"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.47.12",
+    "hls.js": "^1.5.15",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.468.0",
     "next": "14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sonner": "^1.7.2",
     "stripe": "^17.5.0",
-    "@anthropic-ai/sdk": "^0.36.3",
-    "zod": "^3.24.1",
-    "hls.js": "^1.5.15",
-    "lucide-react": "^0.468.0",
-    "sonner": "^1.7.2"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.10.3",
@@ -32,7 +33,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.3",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
   }
 }

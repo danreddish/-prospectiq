@@ -6,6 +6,8 @@ import DeepResearchPanel, { DeepResearchChips, PROVISIONAL_TITLE, deepState, res
 import { deepResearchCanStart, deepResearchInProgress, registerCheckCanStart } from '@/lib/deep-research/state'
 import { Campaign, Prospect, OutreachStep, ConversationTurn, ReplyOption, ADVISER_SCORE_LABELS, AdviserFcaData } from '@/types'
 import { toast } from 'sonner'
+import { downloadCompliancePdf, type CompliancePdfPerson } from '@/lib/compliance-pdf'
+import { HEYREACH_MESSAGE_FIELDS, HEYREACH_MESSAGE_LABELS, splitName, type HeyReachState } from '@/lib/heyreach-shared'
 import {
   isLinkedInProfileUrl,
   linkedInLinkKind,
@@ -111,10 +113,69 @@ export default function CampaignDashboard({ campaign, prospects, pendingProspect
   // Live state of each job from the server, and the people in the run just started.
   const [deepLive, setDeepLive] = useState<Record<string, { status: string; in_progress: boolean; stage: string | null }>>({})
   const [deepBatch, setDeepBatch] = useState<string[]>([])
-  // Tick boxes on the cards: run deep research on just these. None ticked = everyone eligible.
+  // Tick boxes on the cards, on everyone researched. Deep research runs on the
+  // ticked people who can still be researched (none ticked = everyone who can);
+  // the compliance PDF covers whoever is ticked.
   const [deepPicked, setDeepPicked] = useState<Set<string>>(new Set())
+  const pickedProspects = prospects.filter((p) => deepPicked.has(p.id))
   const deepPickedIds = deepEligible.filter((p) => deepPicked.has(p.id)).map((p) => p.id)
-  const deepTargetIds = deepPickedIds.length > 0 ? deepPickedIds : deepEligible.map((p) => p.id)
+  const deepTargetIds = pickedProspects.length > 0 ? deepPickedIds : deepEligible.map((p) => p.id)
+  const [pdfBusy, setPdfBusy] = useState(false)
+
+  // v82: one PDF of the messages for the ticked people, for a compliance team.
+  // Where a person has a saved Send to LinkedIn sequence, that is what would
+  // be sent, so that is what goes in; otherwise the outreach drafted here.
+  async function compliancePdf() {
+    if (pickedProspects.length === 0) {
+      toast.error('Tick the people you want in the PDF first.')
+      return
+    }
+    const people: CompliancePdfPerson[] = []
+    const nothing: string[] = []
+    for (const p of pickedProspects) {
+      const hr = (p as Prospect & { heyreach?: HeyReachState | null }).heyreach || null
+      const names = splitName(p.name)
+      const name = [hr?.first_name ?? names.first, hr?.last_name ?? names.last].filter(Boolean).join(' ') || cleanPersonName(p.name)
+      const base = { name, role: p.role, company: p.company, profileUrl: hr?.profile_url || p.linkedin_url }
+      const saved = HEYREACH_MESSAGE_FIELDS.filter((f) => hr?.msgs?.[f]?.trim())
+      if (saved.length > 0) {
+        people.push({
+          ...base,
+          kind: 'linkedin',
+          messages: HEYREACH_MESSAGE_FIELDS.map((f, i) => ({ label: `Message ${i + 1}: ${HEYREACH_MESSAGE_LABELS[f]}`, text: hr?.msgs?.[f] || '' })),
+        })
+        continue
+      }
+      const steps = [p.outreach?.step1, p.outreach?.step2, p.outreach?.step3].filter((s): s is OutreachStep => !!s?.message?.trim())
+      if (steps.length === 0) {
+        nothing.push(cleanPersonName(p.name))
+        continue
+      }
+      people.push({
+        ...base,
+        kind: 'draft',
+        messages: steps.map((s, i) => ({ label: `Message ${i + 1}: ${s.title || 'Outreach'}${s.timing ? ` (${s.timing})` : ''}`, text: s.message })),
+      })
+    }
+    if (people.length === 0) {
+      toast.error('None of the ticked people have messages written yet.')
+      return
+    }
+    setPdfBusy(true)
+    try {
+      await downloadCompliancePdf(campaign.name, people)
+      const drafts = people.filter((x) => x.kind === 'draft').length
+      const notes = []
+      if (nothing.length) notes.push(`Left out, no messages yet: ${nothing.join(', ')}.`)
+      if (showHeyReach && drafts > 0) notes.push(`${drafts} ${drafts === 1 ? 'person has' : 'people have'} no Send to LinkedIn messages yet, so the PDF shows their draft outreach, marked as a draft.`)
+      toast.success(`PDF downloaded for ${people.length} ${people.length === 1 ? 'person' : 'people'}.${notes.length ? ' ' + notes.join(' ') : ''}`, { duration: notes.length ? 12000 : 4000 })
+    } catch (err) {
+      console.error('[CompliancePdf]', err)
+      toast.error('The PDF could not be made. Try again.')
+    } finally {
+      setPdfBusy(false)
+    }
+  }
   function toggleDeepPick(id: string) {
     setDeepPicked((prev) => {
       const next = new Set(prev)
@@ -866,7 +927,7 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
             {(deepEligible.length > 0 || deepRunning > 0) && (
               <button
                 onClick={() => startDeepResearch(deepTargetIds)}
-                disabled={deepStarting || deepEligible.length === 0}
+                disabled={deepStarting || deepTargetIds.length === 0}
                 title="Reads Companies House, the FCA Register, each LinkedIn profile and the firm's website, then re-scores and rewrites the outreach. Tick people in the list to run it on just those."
                 className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors disabled:opacity-60"
               >
@@ -874,9 +935,19 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
                   ? `Researching ${deepRunning}...`
                   : deepStarting
                     ? 'Starting...'
-                    : deepPickedIds.length > 0
+                    : pickedProspects.length > 0
                       ? `Deep research (${deepPickedIds.length} ticked)`
                       : `Deep research (all ${deepEligible.length})`}
+              </button>
+            )}
+            {prospects.length > 0 && (
+              <button
+                onClick={compliancePdf}
+                disabled={pdfBusy}
+                title="Tick people in the list, then download their messages as one PDF to send to compliance."
+                className="text-[10px] px-2.5 py-1.5 rounded border border-brand-rose-gold/50 text-brand-rose-gold hover:bg-brand-rose-gold/10 transition-colors disabled:opacity-60"
+              >
+                {pdfBusy ? 'Making PDF...' : pickedProspects.length > 0 ? `Compliance PDF (${pickedProspects.length} ticked)` : 'Compliance PDF'}
               </button>
             )}
           </div>
@@ -951,6 +1022,23 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
           ))}
         </div>
 
+        {/* v82: tick or clear everyone in view */}
+        {filtered.length > 1 && (
+          <div className="px-3 pt-2 flex gap-3 text-[10px] text-brand-beige">
+            <button
+              onClick={() => setDeepPicked((prev) => new Set([...Array.from(prev), ...filtered.map((p) => p.id)]))}
+              className="hover:text-brand-rose-gold underline underline-offset-2"
+            >
+              Tick all {filtered.length}
+            </button>
+            {deepPicked.size > 0 && (
+              <button onClick={() => setDeepPicked(new Set())} className="hover:text-brand-rose-gold underline underline-offset-2">
+                Clear ticks ({pickedProspects.length})
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Prospect cards */}
         <div className="p-2">
           {filtered.map((prospect) => (
@@ -967,13 +1055,13 @@ ${p.outreach?.step3 ? `<div class="step"><div class="step-title">Step 3: Value +
               }}
             >
               <div className="flex items-start justify-between gap-2">
-                {/* v81: tick to include in deep research. A span, because a card is already a button. */}
-                {!isAdviser && deepResearchCanStart(deepState(prospect)) && (
+                {/* v82: tick to pick this person, for deep research or the compliance PDF. A span, because a card is already a button. */}
+                {(
                   <span
                     role="checkbox"
                     aria-checked={deepPicked.has(prospect.id)}
-                    aria-label={`Include ${cleanPersonName(prospect.name)} in deep research`}
-                    title="Tick to include in deep research"
+                    aria-label={`Pick ${cleanPersonName(prospect.name)}`}
+                    title={deepResearchCanStart(deepState(prospect)) && !isAdviser ? 'Tick for deep research or the compliance PDF' : 'Tick to include in the compliance PDF'}
                     tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation()
