@@ -58,6 +58,7 @@ ${webSearch
 Do not search for or report anything about the person's private life: family, home, health, or personal finances.
 
 RULES
+- Inside any JSON text value, never use a double quote mark. Quote a job title, headline or phrase with single quotes.
 - Report only what the evidence or a page you read actually says. Never fill a gap with a guess. If something is not known, leave it out.
 - Every finding names its source: "Companies House", "FCA Register", "LinkedIn profile", or the full address of the page.
 - If the web results are about a different firm with a similar name, ignore them and say the firm's site was not found.
@@ -87,6 +88,76 @@ Give 4 to 8 findings. Do not repeat the decision-maker check as a finding: it is
 }
 
 type Block = { type: string; text?: string; content?: unknown; name?: string }
+
+/**
+ * Mends the two slips that break the model's JSON: a double quote left
+ * unescaped inside a text value (a quoted job title, say) and a raw line
+ * break inside one. A quote ends a value only if what follows it is a comma,
+ * a colon or a closing bracket; any other quote inside a value is escaped.
+ */
+export function repairJson(text: string): string {
+  let out = ''
+  let inString = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (!inString) {
+      if (ch === '"') inString = true
+      out += ch
+      continue
+    }
+    if (ch === '\\') {
+      out += ch + (text[i + 1] ?? '')
+      i++
+    } else if (ch === '\n') {
+      out += '\\n'
+    } else if (ch === '\r') {
+      // dropped
+    } else if (ch === '"') {
+      const next = text.slice(i + 1).match(/^\s*(.)/)?.[1]
+      if (next === undefined || next === ',' || next === '}' || next === ']' || next === ':') {
+        inString = false
+        out += ch
+      } else {
+        out += '\\"'
+      }
+    } else {
+      out += ch
+    }
+  }
+  return out
+}
+
+/**
+ * Reads the model's answer. Three goes: as it is, mended in code, and
+ * finally handed to the small model to be rewritten as valid JSON. The last
+ * costs a fraction of a penny and saves a whole research run.
+ */
+async function parseAnswer(json: string): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(json) as Record<string, unknown>
+  } catch {}
+  try {
+    return JSON.parse(repairJson(json)) as Record<string, unknown>
+  } catch {}
+  try {
+    console.warn('[DeepResearch] Answer was not valid JSON; asking for it to be rewritten')
+    const fixed = (await getAnthropic().messages.create(
+      {
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 3000,
+        system: 'You are given text that should be one JSON object but has syntax errors, usually an unescaped double quote inside a string. Return the same object as valid JSON. Change nothing but the syntax. No commentary, no code fence.',
+        messages: [{ role: 'user', content: json }],
+      },
+      { maxRetries: 1, timeout: 45000 }
+    )) as Anthropic.Message
+    const text = (fixed.content as unknown as Block[]).filter((b) => b.type === 'text').map((b) => b.text || '').join('')
+    const match = text.match(/\{[\s\S]*\}/)
+    if (match) return JSON.parse(match[0]) as Record<string, unknown>
+  } catch (err) {
+    console.error('[DeepResearch] Rewrite of the answer failed:', err instanceof Error ? err.message : err)
+  }
+  throw new Error('The research came back in a form that could not be read. Run it again.')
+}
 
 function domainOf(url: string): string {
   try {
@@ -206,7 +277,7 @@ ${evidenceLines(evidence).join('\n')}`
   const answer = result.blocks.slice(lastResultAt + 1).filter((b) => b.type === 'text').map((b) => b.text || '').join('')
   const json = answer.match(/\{[\s\S]*\}/)
   if (!json) throw new Error('Deep research did not return a result that could be read')
-  const raw = JSON.parse(json[0]) as Record<string, unknown>
+  const raw = await parseAnswer(json[0])
   console.log(`[DeepResearch] Claude ${model}: ${Date.now() - startedAt}ms, ${result.usageIn} tokens in, ${result.usageOut} out, ${searches} searches`)
 
   const knownSites = [evidence.fca?.website, evidence.profile?.firm_website].filter((s): s is string => !!s)
