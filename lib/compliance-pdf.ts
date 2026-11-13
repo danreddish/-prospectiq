@@ -27,13 +27,17 @@ export interface CompliancePdfPerson {
  */
 export function pdfSafe(text: string): string {
   const swapped = text
-    .replace(/[‘’‚′]/g, "'")
-    .replace(/[“”„″]/g, '"')
-    .replace(/[‐-―−]/g, '-')
-    .replace(/…/g, '...')
-    .replace(/[  -  ]/g, ' ')
-    .replace(/[​-‍﻿]/g, '')
-    .replace(/•/g, '-')
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/[\u00A0\u2000-\u200A\u202F]/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u2022/g, '-')
+    .replace(/\u0141/g, 'L')
+    .replace(/\u0142/g, 'l')
+    .replace(/\u0111/g, 'd')
+    .replace(/\u0131/g, 'i')
   let out = ''
   for (const ch of Array.from(swapped)) {
     const code = ch.codePointAt(0) || 0
@@ -41,10 +45,10 @@ export function pdfSafe(text: string): string {
       out += ch
       continue
     }
-    const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, '')
+    const base = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     if (base && Array.from(base).every((c) => (c.codePointAt(0) || 0) < 128)) out += base
   }
-  return out
+  return out.replace(/ {2,}/g, ' ')
 }
 
 function intro(people: CompliancePdfPerson[]): string[] {
